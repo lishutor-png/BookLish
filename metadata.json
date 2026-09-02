@@ -1,0 +1,6 @@
+{
+  "name": "BookLish",
+  "description": "Aplikasi pembaca EPUB & PDF offline yang ringan dan mudah digunakan dengan pengaturan ukuran bolpoin & stabilo, bookmark, mode malam, pencarian kata, dan daftar isi.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
