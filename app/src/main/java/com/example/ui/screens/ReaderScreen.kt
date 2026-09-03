@@ -4,17 +4,16 @@ import android.graphics.Bitmap
 import androidx.compose.animation.*
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.rememberTransformableState
-import androidx.compose.foundation.gestures.transformable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -27,12 +26,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.*
@@ -40,6 +40,7 @@ import com.example.ui.components.*
 import com.example.ui.theme.*
 import com.example.ui.viewmodel.ReaderUiState
 import com.example.ui.viewmodel.ReaderViewModel
+import kotlin.math.abs
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -50,79 +51,289 @@ fun ReaderScreen(
     modifier: Modifier = Modifier
 ) {
     val book = uiState.currentBook ?: return
-    val isPdf = book.fileType.equals("PDF", ignoreCase = true)
-    val theme = uiState.settings.theme
     val bookmarks by viewModel.getBookmarksForCurrentBook().collectAsState(initial = emptyList())
+    val theme = uiState.settings.theme
 
-    val backgroundColor = Color(theme.backgroundColor)
-    val textColor = Color(theme.textColor)
+    var scale by remember { mutableFloatStateOf(1f) }
+    var offset by remember { mutableStateOf(Offset.Zero) }
+    val livePoints = remember { mutableStateListOf<DrawingPoint>() }
 
-    val fontFamily = remember(uiState.settings.fontFamily) {
-        when (uiState.settings.fontFamily) {
-            ReaderFontFamily.SERIF -> FontFamily.Serif
-            ReaderFontFamily.SANS_SERIF -> FontFamily.SansSerif
-            ReaderFontFamily.MONOSPACE -> FontFamily.Monospace
-            ReaderFontFamily.ROUNDED -> FontFamily.Default
-        }
-    }
-
-    val textAlign = remember(uiState.settings.textAlign) {
-        when (uiState.settings.textAlign) {
-            ReaderTextAlign.JUSTIFY -> TextAlign.Justify
-            ReaderTextAlign.LEFT -> TextAlign.Start
-            ReaderTextAlign.CENTER -> TextAlign.Center
-        }
+    // Reset zoom and pan on page switch
+    LaunchedEffect(uiState.currentPageIndex) {
+        scale = 1f
+        offset = Offset.Zero
+        livePoints.clear()
     }
 
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(backgroundColor)
+            .background(Color(theme.backgroundColor))
             .testTag("reader_screen")
     ) {
-        // Document Content View (EPUB Text or PDF Bitmap)
+        // Main Interactive PDF & Drawing Canvas Area
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null
-                ) {
-                    if (uiState.activeTool == ActiveDrawingTool.NONE) {
-                        viewModel.toggleControls()
+                .padding(top = 56.dp, bottom = 60.dp)
+                .pointerInput(uiState.activeTool, scale, offset) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        var isTwoFingerGesture = false
+                        var touchMoved = false
+                        val startPos = down.position
+
+                        if (uiState.activeTool == ActiveDrawingTool.PEN || uiState.activeTool == ActiveDrawingTool.HIGHLIGHTER) {
+                            val localX = (down.position.x - offset.x) / scale
+                            val localY = (down.position.y - offset.y) / scale
+                            livePoints.add(DrawingPoint(localX, localY))
+                        }
+
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val pointers = event.changes.filter { it.pressed }
+                            if (pointers.isEmpty()) break
+
+                            if (pointers.size >= 2) {
+                                // 2-finger gesture: Zoom & Pan canvas simultaneously!
+                                if (!isTwoFingerGesture) {
+                                    isTwoFingerGesture = true
+                                    livePoints.clear() // Cancel live drawing stroke if 2 fingers touched
+                                }
+
+                                val zoom = event.calculateZoom()
+                                val pan = event.calculatePan()
+                                val newScale = (scale * zoom).coerceIn(1.0f, 4.5f)
+
+                                val centroid = event.calculateCentroid(useCurrent = false)
+                                if (centroid != Offset.Unspecified) {
+                                    val offsetDiff = (centroid - offset) * (1 - zoom)
+                                    var newOffset = offset + pan - offsetDiff
+                                    if (newScale <= 1.02f) {
+                                        newOffset = Offset.Zero
+                                    }
+                                    scale = newScale
+                                    offset = newOffset
+                                } else {
+                                    scale = newScale
+                                    offset += pan
+                                }
+
+                                event.changes.forEach { it.consume() }
+                            } else if (pointers.size == 1 && !isTwoFingerGesture) {
+                                val pointer = pointers.first()
+                                val currentPos = pointer.position
+                                if (abs(currentPos.x - startPos.x) > 4f || abs(currentPos.y - startPos.y) > 4f) {
+                                    touchMoved = true
+                                }
+
+                                if (uiState.activeTool == ActiveDrawingTool.PEN || uiState.activeTool == ActiveDrawingTool.HIGHLIGHTER) {
+                                    val localX = (currentPos.x - offset.x) / scale
+                                    val localY = (currentPos.y - offset.y) / scale
+                                    livePoints.add(DrawingPoint(localX, localY))
+                                    pointer.consume()
+                                } else if (uiState.activeTool == ActiveDrawingTool.ERASER) {
+                                    val localX = (currentPos.x - offset.x) / scale
+                                    val localY = (currentPos.y - offset.y) / scale
+                                    viewModel.eraseStrokeAt(DrawingPoint(localX, localY))
+                                    pointer.consume()
+                                } else {
+                                    // ActiveTool == NONE
+                                    if (scale > 1.05f) {
+                                        val panChange = pointer.positionChange()
+                                        offset += panChange
+                                        pointer.consume()
+                                    }
+                                }
+                            }
+                        }
+
+                        // Pointer Up / Gesture Ended
+                        if (!isTwoFingerGesture) {
+                            if (uiState.activeTool == ActiveDrawingTool.PEN || uiState.activeTool == ActiveDrawingTool.HIGHLIGHTER) {
+                                if (livePoints.isNotEmpty()) {
+                                    val isHighlighter = uiState.activeTool == ActiveDrawingTool.HIGHLIGHTER
+                                    val color = if (isHighlighter) uiState.highlighterColor else uiState.penColor
+                                    val strokeWidth = if (isHighlighter) uiState.highlighterStrokeWidth else uiState.penStrokeWidth
+                                    val alpha = if (isHighlighter) 0.35f else 1.0f
+
+                                    val newStroke = DrawingStroke(
+                                        points = livePoints.toList(),
+                                        color = color,
+                                        strokeWidth = strokeWidth,
+                                        alpha = alpha,
+                                        isHighlighter = isHighlighter
+                                    )
+                                    viewModel.addStroke(newStroke)
+                                }
+                            } else if (uiState.activeTool == ActiveDrawingTool.NONE && !touchMoved) {
+                                // Tap toggles reader controls
+                                viewModel.toggleControls()
+                            }
+                        }
+                        livePoints.clear()
                     }
-                }
+                },
+            contentAlignment = Alignment.Center
         ) {
-            if (isPdf) {
-                PdfViewerContent(
-                    bitmap = uiState.activePagePdfBitmap,
-                    isRendering = uiState.isRenderingPdfPage,
-                    theme = theme
-                )
-            } else {
-                EpubViewerContent(
-                    uiState = uiState,
-                    fontFamily = fontFamily,
-                    textColor = textColor,
-                    textAlign = textAlign
+            // Container with graphicsLayer transformation for 100% synchronized zoom & pan
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        scaleX = scale
+                        scaleY = scale
+                        translationX = offset.x
+                        translationY = offset.y
+                        transformOrigin = TransformOrigin(0f, 0f)
+                    }
+            ) {
+                // 1. PDF Page Rendered Bitmap
+                if (uiState.activePagePdfBitmap != null) {
+                    Image(
+                        bitmap = uiState.activePagePdfBitmap.asImageBitmap(),
+                        contentDescription = "Halaman Dokumen PDF",
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(4.dp)
+                    )
+                }
+
+                // 2. Vector Drawing Overlay (Committed Strokes & Real-time Live Stroke)
+                DrawingCanvasOverlay(
+                    activeTool = uiState.activeTool,
+                    penColor = uiState.penColor,
+                    penStrokeWidth = uiState.penStrokeWidth,
+                    highlighterColor = uiState.highlighterColor,
+                    highlighterStrokeWidth = uiState.highlighterStrokeWidth,
+                    strokes = uiState.currentStrokes,
+                    livePoints = livePoints.toList(),
+                    modifier = Modifier.fillMaxSize()
                 )
             }
 
-            // Interactive Drawing Canvas Overlay (Bolpoin & Stabilo & Eraser)
-            DrawingCanvasOverlay(
-                activeTool = uiState.activeTool,
-                penColor = uiState.penColor,
-                penStrokeWidth = uiState.penStrokeWidth,
-                highlighterColor = uiState.highlighterColor,
-                highlighterStrokeWidth = uiState.highlighterStrokeWidth,
-                strokes = uiState.currentStrokes,
-                onAddStroke = { stroke -> viewModel.addStroke(stroke) },
-                onEraseAt = { point -> viewModel.eraseStrokeAt(point) },
-                modifier = Modifier.fillMaxSize()
-            )
+            // PDF Page Rendering Spinner Indicator
+            if (uiState.isRenderingPdfPage) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.White.copy(alpha = 0.4f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(36.dp),
+                        color = MaterialTheme.colorScheme.primary,
+                        strokeWidth = 3.dp
+                    )
+                }
+            }
         }
 
-        // Top Navigation Bar - Clean Minimalist UI
+        // Floating Zoom Controls & Quick Reset Pill (Bottom Right)
+        AnimatedVisibility(
+            visible = scale > 1.05f || uiState.activeTool != ActiveDrawingTool.NONE,
+            enter = fadeIn() + scaleIn(),
+            exit = fadeOut() + scaleOut(),
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = 16.dp, bottom = if (uiState.activeTool != ActiveDrawingTool.NONE) 130.dp else 90.dp)
+        ) {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                shadowElevation = 4.dp
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
+                ) {
+                    // Zoom Out
+                    IconButton(
+                        onClick = {
+                            scale = (scale - 0.25f).coerceAtLeast(1.0f)
+                            if (scale <= 1.02f) offset = Offset.Zero
+                        },
+                        modifier = Modifier.size(32.dp).testTag("zoom_out_button")
+                    ) {
+                        Icon(Icons.Default.Remove, contentDescription = "Perkecil", tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(16.dp))
+                    }
+
+                    // Percentage & Reset
+                    Text(
+                        text = "${(scale * 100).toInt()}%",
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier
+                            .clickable {
+                                scale = 1.0f
+                                offset = Offset.Zero
+                            }
+                            .padding(horizontal = 6.dp)
+                            .testTag("zoom_level_label")
+                    )
+
+                    // Zoom In
+                    IconButton(
+                        onClick = {
+                            scale = (scale + 0.25f).coerceAtMost(4.5f)
+                        },
+                        modifier = Modifier.size(32.dp).testTag("zoom_in_button")
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = "Perbesar", tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(16.dp))
+                    }
+
+                    if (scale > 1.05f) {
+                        IconButton(
+                            onClick = {
+                                scale = 1.0f
+                                offset = Offset.Zero
+                            },
+                            modifier = Modifier.size(32.dp).testTag("reset_zoom_button")
+                        ) {
+                            Icon(Icons.Default.FitScreen, contentDescription = "Reset Zoom", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                        }
+                    }
+                }
+            }
+        }
+
+        // Two-Finger Gesture Hint Pill when in Drawing Mode
+        AnimatedVisibility(
+            visible = uiState.activeTool == ActiveDrawingTool.PEN || uiState.activeTool == ActiveDrawingTool.HIGHLIGHTER,
+            enter = fadeIn() + slideInVertically { -it },
+            exit = fadeOut() + slideOutVertically { -it },
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 66.dp)
+        ) {
+            Surface(
+                shape = RoundedCornerShape(50),
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)),
+                shadowElevation = 2.dp
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Pinch,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Gunakan gestur 2 jari untuk zoom & geser",
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+        }
+
+        // Top Navigation Bar - Clean White & Crimson Theme
         AnimatedVisibility(
             visible = uiState.isControlsVisible || uiState.activeTool != ActiveDrawingTool.NONE,
             enter = fadeIn() + slideInVertically { -it },
@@ -131,8 +342,9 @@ fun ReaderScreen(
         ) {
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                color = MinimalDarkBackground.copy(alpha = 0.96f),
-                border = androidx.compose.foundation.BorderStroke(1.dp, MinimalBorder.copy(alpha = 0.7f))
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.98f),
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                shadowElevation = 3.dp
             ) {
                 Column(modifier = Modifier.statusBarsPadding()) {
                     Row(
@@ -154,8 +366,8 @@ fun ReaderScreen(
                             ) {
                                 Icon(
                                     Icons.AutoMirrored.Filled.ArrowBack,
-                                    contentDescription = "Kembali ke Perpustakaan",
-                                    tint = MinimalTextPrimary,
+                                    contentDescription = "Kembali ke Beranda",
+                                    tint = MaterialTheme.colorScheme.onSurface,
                                     modifier = Modifier.size(20.dp)
                                 )
                             }
@@ -166,19 +378,19 @@ fun ReaderScreen(
                                 Text(
                                     text = book.title,
                                     style = MaterialTheme.typography.titleMedium.copy(
-                                        fontWeight = FontWeight.SemiBold,
+                                        fontWeight = FontWeight.Bold,
                                         letterSpacing = (-0.1).sp
                                     ),
                                     maxLines = 1,
-                                    color = MinimalTextPrimary
+                                    color = MaterialTheme.colorScheme.onSurface
                                 )
                                 Text(
-                                    text = uiState.currentChapterTitle,
+                                    text = "Halaman ${uiState.currentPageIndex + 1} dari ${uiState.totalPages}",
                                     style = MaterialTheme.typography.labelSmall.copy(
                                         letterSpacing = 0.3.sp
                                     ),
                                     maxLines = 1,
-                                    color = MinimalPrimary
+                                    color = MaterialTheme.colorScheme.primary
                                 )
                             }
                         }
@@ -196,7 +408,7 @@ fun ReaderScreen(
                                 Icon(
                                     Icons.Default.Search,
                                     contentDescription = "Cari Kata",
-                                    tint = MinimalTextSecondary,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.size(20.dp)
                                 )
                             }
@@ -208,8 +420,8 @@ fun ReaderScreen(
                             ) {
                                 Icon(
                                     Icons.Default.MenuBook,
-                                    contentDescription = "Daftar Isi",
-                                    tint = MinimalTextSecondary,
+                                    contentDescription = "Daftar Halaman",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.size(20.dp)
                                 )
                             }
@@ -223,7 +435,7 @@ fun ReaderScreen(
                                 Icon(
                                     if (isBookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
                                     contentDescription = "Penanda Halaman",
-                                    tint = if (isBookmarked) MinimalPrimary else MinimalTextSecondary,
+                                    tint = if (isBookmarked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.size(20.dp)
                                 )
                             }
@@ -236,7 +448,7 @@ fun ReaderScreen(
                                 Icon(
                                     Icons.Default.BookmarkAdd,
                                     contentDescription = "Tambah Penanda",
-                                    tint = MinimalPrimary,
+                                    tint = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.size(20.dp)
                                 )
                             }
@@ -253,12 +465,13 @@ fun ReaderScreen(
             exit = fadeOut(),
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = 20.dp)
+                .padding(bottom = 16.dp)
         ) {
             Surface(
                 shape = RoundedCornerShape(50),
-                color = MinimalDarkSurfaceVariant.copy(alpha = 0.9f),
-                border = androidx.compose.foundation.BorderStroke(1.dp, MinimalBorder.copy(alpha = 0.8f)),
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                shadowElevation = 3.dp,
                 modifier = Modifier.clickable { viewModel.toggleControls() }
             ) {
                 Row(
@@ -269,13 +482,13 @@ fun ReaderScreen(
                         modifier = Modifier
                             .size(7.dp)
                             .clip(CircleShape)
-                            .background(Color(0xFF4ADE80))
+                            .background(MaterialTheme.colorScheme.primary)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = "Halaman ${uiState.currentPageIndex + 1} dari ${uiState.totalPages}",
                         style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
-                        color = MinimalTextPrimary
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                 }
             }
@@ -288,7 +501,7 @@ fun ReaderScreen(
                 .navigationBarsPadding(),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Floating Drawing Toolbar if drawing tool is active (with adjustable pen & stabilo size)
+            // Floating Drawing Toolbar if drawing tool is active
             AnimatedVisibility(
                 visible = uiState.activeTool != ActiveDrawingTool.NONE,
                 enter = fadeIn() + slideInVertically { it },
@@ -313,7 +526,7 @@ fun ReaderScreen(
                 )
             }
 
-            // Bottom Navigation & Controls Bar - Clean Minimalism Design
+            // Bottom Navigation & Controls Bar - Clean White Design
             AnimatedVisibility(
                 visible = uiState.isControlsVisible && uiState.activeTool == ActiveDrawingTool.NONE,
                 enter = fadeIn() + slideInVertically { it },
@@ -322,8 +535,9 @@ fun ReaderScreen(
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-                    color = MinimalDarkSurface.copy(alpha = 0.98f),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, MinimalBorder)
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.98f),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    shadowElevation = 4.dp
                 ) {
                     Column(
                         modifier = Modifier
@@ -340,7 +554,7 @@ fun ReaderScreen(
                             Text(
                                 text = "Halaman ${uiState.currentPageIndex + 1} / ${uiState.totalPages}",
                                 style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
-                                color = MinimalPrimary
+                                color = MaterialTheme.colorScheme.primary
                             )
 
                             Slider(
@@ -351,9 +565,9 @@ fun ReaderScreen(
                                 valueRange = 0f..(uiState.totalPages - 1).coerceAtLeast(1).toFloat(),
                                 steps = (uiState.totalPages - 2).coerceAtLeast(0),
                                 colors = SliderDefaults.colors(
-                                    thumbColor = MinimalPrimary,
-                                    activeTrackColor = MinimalPrimary,
-                                    inactiveTrackColor = MinimalBorder
+                                    thumbColor = MaterialTheme.colorScheme.primary,
+                                    activeTrackColor = MaterialTheme.colorScheme.primary,
+                                    inactiveTrackColor = MaterialTheme.colorScheme.outlineVariant
                                 ),
                                 modifier = Modifier
                                     .weight(1f)
@@ -362,15 +576,15 @@ fun ReaderScreen(
                             )
 
                             Text(
-                                text = "${((uiState.currentPageIndex + 1).toFloat() / uiState.totalPages * 100).toInt()}%",
+                                text = "${((uiState.currentPageIndex + 1).toFloat() / uiState.totalPages.coerceAtLeast(1) * 100).toInt()}%",
                                 style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
-                                color = MinimalTextMuted
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
 
                         Spacer(modifier = Modifier.height(6.dp))
 
-                        // Bottom Minimalist Tool Items Row
+                        // Bottom Tool Items Row
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -385,7 +599,7 @@ fun ReaderScreen(
                                 Icon(
                                     Icons.AutoMirrored.Filled.ArrowBack,
                                     contentDescription = "Sebelumnya",
-                                    tint = if (uiState.currentPageIndex > 0) MinimalTextPrimary else MinimalTextMuted.copy(alpha = 0.3f),
+                                    tint = if (uiState.currentPageIndex > 0) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
                                     modifier = Modifier.size(18.dp)
                                 )
                             }
@@ -408,35 +622,35 @@ fun ReaderScreen(
                                 testTag = "activate_highlighter_chip"
                             )
 
-                            // 3. DAFTAR ISI
+                            // 3. DAFTAR HALAMAN
                             MinimalReaderToolItem(
                                 icon = Icons.Default.FormatListBulleted,
-                                label = "Daftar Isi",
+                                label = "Halaman",
                                 isActive = false,
                                 onClick = { viewModel.setTocSheetOpen(true) },
                                 testTag = "reader_toc_tab"
                             )
 
-                            // 4. PENGATURAN FONT & TAMPILAN
+                            // 4. PENGATURAN TAMPILAN
                             MinimalReaderToolItem(
-                                icon = Icons.Default.FormatSize,
+                                icon = Icons.Default.Tune,
                                 label = "Tampilan",
                                 isActive = false,
                                 onClick = { viewModel.setSettingsSheetOpen(true) },
                                 testTag = "reading_settings_button"
                             )
 
-                            // 5. TEMA (Malam / Siang / Sepia / OLED)
+                            // 5. TEMA (Putih / Malam / Sepia / OLED)
                             MinimalReaderToolItem(
                                 icon = if (theme.isDark) Icons.Default.NightsStay else Icons.Default.WbSunny,
-                                label = if (theme.isDark) "Malam" else "Siang",
+                                label = if (theme.isDark) "Malam" else "Terang",
                                 isActive = false,
                                 onClick = {
                                     val nextTheme = when (theme) {
-                                        ReadingTheme.NIGHT -> ReadingTheme.LIGHT
                                         ReadingTheme.LIGHT -> ReadingTheme.SEPIA
-                                        ReadingTheme.SEPIA -> ReadingTheme.OLED
-                                        ReadingTheme.OLED -> ReadingTheme.NIGHT
+                                        ReadingTheme.SEPIA -> ReadingTheme.NIGHT
+                                        ReadingTheme.NIGHT -> ReadingTheme.OLED
+                                        ReadingTheme.OLED -> ReadingTheme.LIGHT
                                     }
                                     viewModel.updateSettings { it.copy(theme = nextTheme) }
                                 },
@@ -452,7 +666,7 @@ fun ReaderScreen(
                                 Icon(
                                     Icons.AutoMirrored.Filled.ArrowForward,
                                     contentDescription = "Berikutnya",
-                                    tint = if (uiState.currentPageIndex < uiState.totalPages - 1) MinimalTextPrimary else MinimalTextMuted.copy(alpha = 0.3f),
+                                    tint = if (uiState.currentPageIndex < uiState.totalPages - 1) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
                                     modifier = Modifier.size(18.dp)
                                 )
                             }
@@ -466,7 +680,7 @@ fun ReaderScreen(
                                 .width(80.dp)
                                 .height(3.dp)
                                 .clip(CircleShape)
-                                .background(MinimalBorder)
+                                .background(MaterialTheme.colorScheme.outlineVariant)
                         )
                     }
                 }
@@ -485,10 +699,8 @@ fun ReaderScreen(
         if (uiState.isTocSheetOpen) {
             TableOfContentsSheet(
                 bookTitle = book.title,
-                chapters = uiState.epubBook?.chapters ?: emptyList(),
                 currentPageIndex = uiState.currentPageIndex,
                 totalPages = uiState.totalPages,
-                isPdf = isPdf,
                 onSelectPageOrChapter = { index ->
                     viewModel.goToPage(index)
                     viewModel.setTocSheetOpen(false)
@@ -526,7 +738,7 @@ fun ReaderScreen(
 
         if (uiState.isAddBookmarkDialogOpen) {
             AddBookmarkDialog(
-                chapterTitle = uiState.currentChapterTitle,
+                chapterTitle = "Halaman ${uiState.currentPageIndex + 1}",
                 onConfirm = { note -> viewModel.addBookmark(note) },
                 onDismiss = { viewModel.setAddBookmarkDialogOpen(false) }
             )
@@ -558,15 +770,15 @@ fun MinimalReaderToolItem(
     ) {
         Surface(
             shape = RoundedCornerShape(12.dp),
-            color = if (isActive) MinimalPrimaryContainer else Color.Transparent,
-            border = if (isActive) null else androidx.compose.foundation.BorderStroke(1.dp, MinimalBorder.copy(alpha = 0.4f)),
+            color = if (isActive) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+            border = if (isActive) null else androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             modifier = Modifier.size(38.dp)
         ) {
             Box(contentAlignment = Alignment.Center) {
                 Icon(
                     imageVector = icon,
                     contentDescription = label,
-                    tint = if (isActive) MinimalPrimary else MinimalTextSecondary,
+                    tint = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(18.dp)
                 )
             }
@@ -579,182 +791,8 @@ fun MinimalReaderToolItem(
                 fontWeight = if (isActive) FontWeight.Bold else FontWeight.Medium,
                 letterSpacing = 0.5.sp
             ),
-            color = if (isActive) MinimalPrimary else MinimalTextMuted
+            color = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
 }
 
-@Composable
-fun EpubViewerContent(
-    uiState: ReaderUiState,
-    fontFamily: FontFamily,
-    textColor: Color,
-    textAlign: TextAlign
-) {
-    val scrollState = rememberScrollState()
-
-    LaunchedEffect(uiState.currentPageIndex) {
-        scrollState.scrollTo(0)
-    }
-
-    val currentChapter = uiState.epubBook?.chapters?.getOrNull(uiState.currentPageIndex)
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(
-                top = 64.dp,
-                bottom = 72.dp,
-                start = uiState.settings.horizontalPaddingDp.dp,
-                end = uiState.settings.horizontalPaddingDp.dp
-            )
-    ) {
-        if (currentChapter != null) {
-            SelectionContainer {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .verticalScroll(scrollState)
-                ) {
-                    // Minimal Breadcrumb header
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 14.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = currentChapter.title.uppercase(),
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                letterSpacing = 1.2.sp,
-                                fontWeight = FontWeight.SemiBold
-                            ),
-                            color = MinimalTextMuted,
-                            maxLines = 1,
-                            modifier = Modifier.weight(1f)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "Halaman ${uiState.currentPageIndex + 1} dari ${uiState.totalPages}",
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                letterSpacing = 0.3.sp
-                            ),
-                            color = MinimalTextMuted
-                        )
-                    }
-
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(1.dp)
-                            .background(MinimalBorder.copy(alpha = 0.4f))
-                    )
-
-                    Spacer(modifier = Modifier.height(18.dp))
-
-                    Text(
-                        text = currentChapter.title,
-                        style = MaterialTheme.typography.headlineSmall.copy(
-                            fontWeight = FontWeight.Bold,
-                            fontFamily = fontFamily,
-                            letterSpacing = (-0.2).sp
-                        ),
-                        color = Color(uiState.settings.theme.accentColor),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    Spacer(modifier = Modifier.height(18.dp))
-
-                    val paragraphs = remember(currentChapter.plainText) {
-                        currentChapter.plainText.split("\n\n").filter { it.isNotBlank() }
-                    }
-
-                    for (p in paragraphs) {
-                        Text(
-                            text = p.trim(),
-                            style = MaterialTheme.typography.bodyLarge.copy(
-                                fontSize = uiState.settings.fontSizeSp.sp,
-                                lineHeight = (uiState.settings.fontSizeSp * uiState.settings.lineHeightMultiplier).sp,
-                                fontFamily = fontFamily,
-                                textAlign = textAlign,
-                                letterSpacing = 0.2.sp
-                            ),
-                            color = textColor,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(bottom = (uiState.settings.fontSizeSp * 0.75f).dp)
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(64.dp))
-                }
-            }
-        } else {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "Memuat bab bacaan...",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = textColor.copy(alpha = 0.6f)
-                )
-            }
-        }
-    }
-}
-
-@Composable
-fun PdfViewerContent(
-    bitmap: Bitmap?,
-    isRendering: Boolean,
-    theme: ReadingTheme
-) {
-    var scale by remember { mutableStateOf(1f) }
-    var offset by remember { mutableStateOf(Offset.Zero) }
-
-    val transformableState = rememberTransformableState { zoomChange, offsetChange, _ ->
-        scale = (scale * zoomChange).coerceIn(0.8f, 3.5f)
-        offset += offsetChange
-    }
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(top = 56.dp, bottom = 64.dp)
-            .transformable(state = transformableState),
-        contentAlignment = Alignment.Center
-    ) {
-        if (bitmap != null) {
-            Image(
-                bitmap = bitmap.asImageBitmap(),
-                contentDescription = "Halaman Dokumen PDF",
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(8.dp)
-                    .graphicsLayer(
-                        scaleX = scale,
-                        scaleY = scale,
-                        translationX = offset.x,
-                        translationY = offset.y
-                    )
-            )
-        }
-
-        if (isRendering) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.2f)),
-                contentAlignment = Alignment.Center
-            ) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(32.dp),
-                    color = MinimalPrimary,
-                    strokeWidth = 2.5.dp
-                )
-            }
-        }
-    }
-}

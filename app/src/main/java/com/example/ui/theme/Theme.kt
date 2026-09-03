@@ -1,7 +1,6 @@
 package com.example.ui.theme
 
 import android.os.Build
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
@@ -12,51 +11,51 @@ import androidx.compose.ui.platform.LocalContext
 
 private val DarkColorScheme =
   darkColorScheme(
-    primary = MinimalPrimary,
-    onPrimary = MinimalOnPrimary,
-    primaryContainer = MinimalPrimaryContainer,
-    onPrimaryContainer = MinimalOnPrimaryContainer,
-    secondary = MinimalSecondary,
-    onSecondary = MinimalOnSecondary,
-    secondaryContainer = MinimalSecondaryContainer,
-    onSecondaryContainer = MinimalOnSecondaryContainer,
-    tertiary = MinimalTertiary,
-    onTertiary = MinimalOnTertiary,
-    background = MinimalDarkBackground,
-    onBackground = MinimalTextPrimary,
-    surface = MinimalDarkSurface,
-    onSurface = MinimalTextPrimary,
-    surfaceVariant = MinimalDarkSurfaceVariant,
-    onSurfaceVariant = MinimalTextSecondary,
-    outline = MinimalOutline,
-    outlineVariant = MinimalOutlineVariant
+    primary = LishPdfPrimary,
+    onPrimary = LishPdfOnPrimary,
+    primaryContainer = LishDarkSurfaceVariant,
+    onPrimaryContainer = LishDarkTextPrimary,
+    secondary = LishPdfSecondary,
+    onSecondary = LishPdfOnSecondary,
+    secondaryContainer = LishDarkSurfaceVariant,
+    onSecondaryContainer = LishDarkTextPrimary,
+    tertiary = LishPdfTertiary,
+    onTertiary = LishPdfOnTertiary,
+    background = LishDarkBackground,
+    onBackground = LishDarkTextPrimary,
+    surface = LishDarkSurface,
+    onSurface = LishDarkTextPrimary,
+    surfaceVariant = LishDarkSurfaceVariant,
+    onSurfaceVariant = LishDarkTextSecondary,
+    outline = LishDarkBorder,
+    outlineVariant = LishDarkBorder
   )
 
 private val LightColorScheme =
   lightColorScheme(
-    primary = MinimalLightPrimary,
-    onPrimary = MinimalLightOnPrimary,
-    primaryContainer = MinimalLightPrimaryContainer,
-    onPrimaryContainer = MinimalLightOnPrimaryContainer,
-    secondary = MinimalSecondary,
-    onSecondary = MinimalOnSecondary,
-    secondaryContainer = MinimalSecondaryContainer,
-    onSecondaryContainer = MinimalOnSecondaryContainer,
-    tertiary = MinimalTertiary,
-    onTertiary = MinimalOnTertiary,
-    background = MinimalLightBackground,
-    onBackground = MinimalLightTextPrimary,
-    surface = MinimalLightSurface,
-    onSurface = MinimalLightTextPrimary,
-    surfaceVariant = MinimalLightSurfaceVariant,
-    onSurfaceVariant = MinimalLightTextSecondary,
-    outline = MinimalLightBorder,
-    outlineVariant = MinimalLightBorder
+    primary = LishPdfPrimary,
+    onPrimary = LishPdfOnPrimary,
+    primaryContainer = LishPdfPrimaryContainer,
+    onPrimaryContainer = LishPdfOnPrimaryContainer,
+    secondary = LishPdfSecondary,
+    onSecondary = LishPdfOnSecondary,
+    secondaryContainer = LishPdfSecondaryContainer,
+    onSecondaryContainer = LishPdfOnSecondaryContainer,
+    tertiary = LishPdfTertiary,
+    onTertiary = LishPdfOnTertiary,
+    background = CleanWhiteBackground,
+    onBackground = LishPdfTextPrimary,
+    surface = CleanWhiteSurface,
+    onSurface = LishPdfTextPrimary,
+    surfaceVariant = CleanWhiteSurfaceVariant,
+    onSurfaceVariant = LishPdfTextSecondary,
+    outline = LishPdfBorder,
+    outlineVariant = LishPdfOutlineVariant
   )
 
 @Composable
 fun MyApplicationTheme(
-  darkTheme: Boolean = true, // Default to Clean Minimalism dark aesthetic
+  darkTheme: Boolean = false, // Default to Putih Bersih (Clean White)
   dynamicColor: Boolean = false,
   content: @Composable () -> Unit,
 ) {
@@ -73,3 +72,4 @@ fun MyApplicationTheme(
 
   MaterialTheme(colorScheme = colorScheme, typography = Typography, content = content)
 }
+

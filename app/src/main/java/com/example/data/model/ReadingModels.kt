@@ -10,42 +10,42 @@ enum class ReadingTheme(
     val accentColor: Long,
     val isDark: Boolean
 ) {
-    NIGHT(
-        title = "Minimal Dark 🌙",
-        backgroundColor = 0xFF1A1C1E,
-        textColor = 0xFFE2E2E6,
-        surfaceColor = 0xFF212327,
-        accentColor = 0xFFD0BCFF,
-        isDark = true
-    ),
     LIGHT(
-        title = "Minimal Light ☀️",
-        backgroundColor = 0xFFF9FAFB,
-        textColor = 0xFF1A1C1E,
-        surfaceColor = 0xFFFFFFFF,
-        accentColor = 0xFF4F378B,
+        title = "Putih Bersih ☀️",
+        backgroundColor = 0xFFFFFFFF,
+        textColor = 0xFF0F172A,
+        surfaceColor = 0xFFF8FAFC,
+        accentColor = 0xFFDC2626,
         isDark = false
     ),
     SEPIA(
-        title = "Sepia Hangat ☕",
-        backgroundColor = 0xFFF4ECD8,
+        title = "Sepia Nyaman ☕",
+        backgroundColor = 0xFFFBF7EE,
         textColor = 0xFF3D3222,
-        surfaceColor = 0xFFEFE4CB,
-        accentColor = 0xFF8C5000,
+        surfaceColor = 0xFFF5EED9,
+        accentColor = 0xFFB45309,
         isDark = false
+    ),
+    NIGHT(
+        title = "Gelap Malam 🌙",
+        backgroundColor = 0xFF121417,
+        textColor = 0xFFF8FAFC,
+        surfaceColor = 0xFF1A1D21,
+        accentColor = 0xFFDC2626,
+        isDark = true
     ),
     OLED(
         title = "OLED Pure 🖤",
         backgroundColor = 0xFF000000,
-        textColor = 0xFFE2E2E6,
-        surfaceColor = 0xFF141618,
-        accentColor = 0xFFD0BCFF,
+        textColor = 0xFFF8FAFC,
+        surfaceColor = 0xFF121417,
+        accentColor = 0xFFDC2626,
         isDark = true
     )
 }
 
 enum class ReaderFontFamily(val displayName: String) {
-    SANS_SERIF("Sans-Serif Minimal"),
+    SANS_SERIF("Sans-Serif Modern"),
     SERIF("Serif Klasik (Buku)"),
     MONOSPACE("Monospace Rapi"),
     ROUNDED("Rounded Santai")
@@ -58,12 +58,12 @@ enum class ReaderTextAlign(val displayName: String) {
 }
 
 data class ReadingSettings(
-    val fontSizeSp: Float = 17f,
-    val lineHeightMultiplier: Float = 1.65f,
-    val theme: ReadingTheme = ReadingTheme.NIGHT,
+    val fontSizeSp: Float = 16f,
+    val lineHeightMultiplier: Float = 1.6f,
+    val theme: ReadingTheme = ReadingTheme.LIGHT,
     val fontFamily: ReaderFontFamily = ReaderFontFamily.SANS_SERIF,
     val textAlign: ReaderTextAlign = ReaderTextAlign.LEFT,
-    val horizontalPaddingDp: Int = 20,
+    val horizontalPaddingDp: Int = 16,
     val isAutoScrollEnabled: Boolean = false,
     val autoScrollSpeed: Float = 1f
 )
@@ -88,3 +88,4 @@ data class DrawingStroke(
     val isHighlighter: Boolean = false,
     val alpha: Float = if (isHighlighter) 0.35f else 1.0f
 )
+

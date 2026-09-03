@@ -19,6 +19,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -47,13 +48,13 @@ fun DrawingToolbar(
     modifier: Modifier = Modifier
 ) {
     val penColors = listOf(
-        Color(0xFFD0BCFF), // Lavender
-        Color(0xFFFFFFFF), // Pure White
-        Color(0xFF80CBC4), // Mint Teal
-        Color(0xFFFFB4AB), // Coral
-        Color(0xFFFFD54F), // Amber Yellow
-        Color(0xFF81D4FA), // Sky Blue
-        Color(0xFFF48FB1)  // Soft Rose
+        Color(0xFFDC2626), // LishPDF Crimson Red
+        Color(0xFF0F172A), // Deep Charcoal
+        Color(0xFF2563EB), // Royal Blue
+        Color(0xFF059669), // Emerald Green
+        Color(0xFFD97706), // Amber
+        Color(0xFF7C3AED), // Violet
+        Color(0xFFFFFFFF)  // White
     )
 
     val highlighterColors = listOf(
@@ -62,7 +63,7 @@ fun DrawingToolbar(
         Color(0xFF38BDF8), // Neon Cyan
         Color(0xFFFF7043), // Neon Orange
         Color(0xFFF472B6), // Neon Pink
-        Color(0xFFD0BCFF)  // Soft Lavender
+        Color(0xFFC084FC)  // Soft Purple
     )
 
     val isExpanded = activeTool != ActiveDrawingTool.NONE
@@ -71,10 +72,11 @@ fun DrawingToolbar(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 6.dp)
+            .shadow(10.dp, RoundedCornerShape(22.dp), spotColor = Color(0x20000000))
             .testTag("drawing_toolbar"),
         shape = RoundedCornerShape(22.dp),
-        color = MinimalDarkSurface,
-        border = androidx.compose.foundation.BorderStroke(1.dp, MinimalBorder)
+        color = MaterialTheme.colorScheme.surface,
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Column(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
@@ -136,7 +138,7 @@ fun DrawingToolbar(
                     modifier = Modifier
                         .height(24.dp)
                         .width(1.dp)
-                        .background(MinimalBorder)
+                        .background(MaterialTheme.colorScheme.outlineVariant)
                 )
 
                 // Undo
@@ -148,7 +150,7 @@ fun DrawingToolbar(
                     Icon(
                         imageVector = Icons.Default.Undo,
                         contentDescription = "Undo",
-                        tint = if (canUndo) MinimalTextPrimary else MinimalTextMuted.copy(alpha = 0.3f),
+                        tint = if (canUndo) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.25f),
                         modifier = Modifier.size(19.dp)
                     )
                 }
@@ -162,7 +164,7 @@ fun DrawingToolbar(
                     Icon(
                         imageVector = Icons.Default.Redo,
                         contentDescription = "Redo",
-                        tint = if (canRedo) MinimalTextPrimary else MinimalTextMuted.copy(alpha = 0.3f),
+                        tint = if (canRedo) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.25f),
                         modifier = Modifier.size(19.dp)
                     )
                 }
@@ -175,7 +177,7 @@ fun DrawingToolbar(
                     Icon(
                         imageVector = Icons.Default.DeleteOutline,
                         contentDescription = "Hapus Coretan Halaman",
-                        tint = MinimalError.copy(alpha = 0.85f),
+                        tint = MaterialTheme.colorScheme.error,
                         modifier = Modifier.size(19.dp)
                     )
                 }
@@ -189,7 +191,7 @@ fun DrawingToolbar(
                         Icon(
                             imageVector = Icons.Default.Check,
                             contentDescription = "Selesai",
-                            tint = MinimalPrimary,
+                            tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(22.dp)
                         )
                     }
@@ -217,7 +219,7 @@ fun DrawingToolbar(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(1.dp)
-                            .background(MinimalBorder.copy(alpha = 0.6f))
+                            .background(MaterialTheme.colorScheme.outlineVariant)
                     )
 
                     Spacer(modifier = Modifier.height(10.dp))
@@ -234,7 +236,7 @@ fun DrawingToolbar(
                                 fontWeight = FontWeight.Bold,
                                 letterSpacing = 0.6.sp
                             ),
-                            color = MinimalTextSecondary
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
 
                         Row(
@@ -250,7 +252,7 @@ fun DrawingToolbar(
                                         .background(color)
                                         .border(
                                             width = if (isSelected) 2.5.dp else 1.dp,
-                                            color = if (isSelected) MinimalPrimary else MinimalBorder,
+                                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
                                             shape = CircleShape
                                         )
                                         .clickable {
@@ -290,13 +292,13 @@ fun DrawingToolbar(
                                     fontWeight = FontWeight.Bold,
                                     letterSpacing = 0.6.sp
                                 ),
-                                color = MinimalTextSecondary
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
                                 text = "${currentWidth.toInt()} px",
                                 style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                                color = MinimalPrimary
+                                color = MaterialTheme.colorScheme.primary
                             )
                         }
 
@@ -308,14 +310,14 @@ fun DrawingToolbar(
                             Text(
                                 text = "Pratinjau:",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MinimalTextMuted
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Box(
                                 modifier = Modifier
                                     .size(32.dp)
                                     .clip(RoundedCornerShape(8.dp))
-                                    .background(MinimalDarkSurfaceVariant)
-                                    .border(1.dp, MinimalBorder, RoundedCornerShape(8.dp)),
+                                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp)),
                                 contentAlignment = Alignment.Center
                             ) {
                                 val previewSize = if (isPen) {
@@ -344,8 +346,8 @@ fun DrawingToolbar(
                         // Minus button (Kecilkan)
                         Surface(
                             shape = CircleShape,
-                            color = MinimalDarkSurfaceVariant,
-                            border = androidx.compose.foundation.BorderStroke(1.dp, MinimalBorder),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                             modifier = Modifier
                                 .size(32.dp)
                                 .clickable {
@@ -361,7 +363,7 @@ fun DrawingToolbar(
                                 Icon(
                                     Icons.Default.Remove,
                                     contentDescription = "Kecilkan Ukuran",
-                                    tint = MinimalTextPrimary,
+                                    tint = MaterialTheme.colorScheme.onSurface,
                                     modifier = Modifier.size(16.dp)
                                 )
                             }
@@ -382,9 +384,9 @@ fun DrawingToolbar(
                             },
                             valueRange = minWidth..maxWidth,
                             colors = SliderDefaults.colors(
-                                thumbColor = MinimalPrimary,
-                                activeTrackColor = MinimalPrimary,
-                                inactiveTrackColor = MinimalBorder
+                                thumbColor = MaterialTheme.colorScheme.primary,
+                                activeTrackColor = MaterialTheme.colorScheme.primary,
+                                inactiveTrackColor = MaterialTheme.colorScheme.outlineVariant
                             ),
                             modifier = Modifier
                                 .weight(1f)
@@ -395,8 +397,8 @@ fun DrawingToolbar(
                         // Plus button (Besarkan)
                         Surface(
                             shape = CircleShape,
-                            color = MinimalDarkSurfaceVariant,
-                            border = androidx.compose.foundation.BorderStroke(1.dp, MinimalBorder),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                             modifier = Modifier
                                 .size(32.dp)
                                 .clickable {
@@ -412,7 +414,7 @@ fun DrawingToolbar(
                                 Icon(
                                     Icons.Default.Add,
                                     contentDescription = "Besarkan Ukuran",
-                                    tint = MinimalTextPrimary,
+                                    tint = MaterialTheme.colorScheme.onSurface,
                                     modifier = Modifier.size(16.dp)
                                 )
                             }
@@ -448,10 +450,10 @@ fun DrawingToolbar(
                             val isSelected = currentWidth.toInt() == sizeVal.toInt()
                             Surface(
                                 shape = RoundedCornerShape(8.dp),
-                                color = if (isSelected) MinimalPrimaryContainer else MinimalDarkSurfaceVariant,
+                                color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
                                 border = androidx.compose.foundation.BorderStroke(
                                     1.dp,
-                                    if (isSelected) MinimalPrimary else MinimalBorder.copy(alpha = 0.6f)
+                                    if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
                                 ),
                                 modifier = Modifier
                                     .weight(1f)
@@ -472,7 +474,7 @@ fun DrawingToolbar(
                                         text = "${sizeVal.toInt()}px",
                                         fontSize = 11.sp,
                                         fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                        color = if (isSelected) MinimalPrimary else MinimalTextSecondary
+                                        color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
                             }
@@ -497,7 +499,7 @@ fun DrawingToolbar(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(1.dp)
-                            .background(MinimalBorder.copy(alpha = 0.6f))
+                            .background(MaterialTheme.colorScheme.outlineVariant)
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Row(
@@ -507,13 +509,13 @@ fun DrawingToolbar(
                         Icon(
                             Icons.Default.TouchApp,
                             contentDescription = null,
-                            tint = MinimalPrimary,
+                            tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(16.dp)
                         )
                         Text(
                             text = "Sentuh atau usap garis coretan yang ingin dihapus",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MinimalTextSecondary
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
@@ -533,10 +535,10 @@ fun DrawingToolButton(
     Surface(
         onClick = onClick,
         shape = RoundedCornerShape(12.dp),
-        color = if (isSelected) MinimalPrimaryContainer else MinimalDarkSurfaceVariant,
+        color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
         border = androidx.compose.foundation.BorderStroke(
             1.dp,
-            if (isSelected) MinimalPrimary else MinimalBorder.copy(alpha = 0.7f)
+            if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
         ),
         modifier = Modifier
             .size(40.dp)
@@ -546,9 +548,10 @@ fun DrawingToolButton(
             Icon(
                 imageVector = icon,
                 contentDescription = label,
-                tint = if (isSelected) MinimalPrimary else MinimalTextSecondary,
+                tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(20.dp)
             )
         }
     }
 }
+

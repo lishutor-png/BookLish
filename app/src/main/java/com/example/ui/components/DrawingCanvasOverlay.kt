@@ -1,7 +1,6 @@
 package com.example.ui.components
 
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -11,7 +10,6 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import com.example.data.model.ActiveDrawingTool
 import com.example.data.model.DrawingPoint
@@ -25,71 +23,22 @@ fun DrawingCanvasOverlay(
     highlighterColor: Color,
     highlighterStrokeWidth: Float,
     strokes: List<DrawingStroke>,
-    onAddStroke: (DrawingStroke) -> Unit,
-    onEraseAt: (DrawingPoint) -> Unit,
+    livePoints: List<DrawingPoint> = emptyList(),
     modifier: Modifier = Modifier
 ) {
-    var livePoints by remember { mutableStateOf<List<DrawingPoint>>(emptyList()) }
-
-    val isDrawingActive = activeTool != ActiveDrawingTool.NONE
-
     Canvas(
         modifier = modifier
             .fillMaxSize()
             .testTag("drawing_canvas_overlay")
-            .then(
-                if (isDrawingActive) {
-                    Modifier.pointerInput(activeTool, penColor, highlighterColor, penStrokeWidth, highlighterStrokeWidth) {
-                        detectDragGestures(
-                            onDragStart = { offset ->
-                                val point = DrawingPoint(offset.x, offset.y)
-                                if (activeTool == ActiveDrawingTool.ERASER) {
-                                    onEraseAt(point)
-                                } else {
-                                    livePoints = listOf(point)
-                                }
-                            },
-                            onDrag = { change, _ ->
-                                change.consume()
-                                val point = DrawingPoint(change.position.x, change.position.y)
-                                if (activeTool == ActiveDrawingTool.ERASER) {
-                                    onEraseAt(point)
-                                } else {
-                                    livePoints = livePoints + point
-                                }
-                            },
-                            onDragEnd = {
-                                if (livePoints.isNotEmpty()) {
-                                    val isHighlighter = activeTool == ActiveDrawingTool.HIGHLIGHTER
-                                    val stroke = DrawingStroke(
-                                        points = livePoints,
-                                        color = if (isHighlighter) highlighterColor else penColor,
-                                        strokeWidth = if (isHighlighter) highlighterStrokeWidth else penStrokeWidth,
-                                        isHighlighter = isHighlighter,
-                                        alpha = if (isHighlighter) 0.35f else 1.0f
-                                    )
-                                    onAddStroke(stroke)
-                                    livePoints = emptyList()
-                                }
-                            },
-                            onDragCancel = {
-                                livePoints = emptyList()
-                            }
-                        )
-                    }
-                } else {
-                    Modifier
-                }
-            )
     ) {
-        // Draw existing strokes
+        // 1. Draw existing committed strokes
         for (stroke in strokes) {
             if (stroke.points.size < 2) {
                 if (stroke.points.size == 1) {
                     val p = stroke.points[0]
                     drawCircle(
                         color = stroke.color.copy(alpha = stroke.alpha),
-                        radius = stroke.strokeWidth / 2,
+                        radius = stroke.strokeWidth / 2f,
                         center = Offset(p.x, p.y)
                     )
                 }
@@ -119,7 +68,7 @@ fun DrawingCanvasOverlay(
             )
         }
 
-        // Draw live drawing stroke
+        // 2. Draw live interactive drawing stroke in real-time
         if (livePoints.isNotEmpty()) {
             val isHighlighter = activeTool == ActiveDrawingTool.HIGHLIGHTER
             val color = if (isHighlighter) highlighterColor.copy(alpha = 0.35f) else penColor
@@ -129,7 +78,7 @@ fun DrawingCanvasOverlay(
                 val p = livePoints[0]
                 drawCircle(
                     color = color,
-                    radius = strokeWidth / 2,
+                    radius = strokeWidth / 2f,
                     center = Offset(p.x, p.y)
                 )
             } else {
@@ -158,3 +107,4 @@ fun DrawingCanvasOverlay(
         }
     }
 }
+

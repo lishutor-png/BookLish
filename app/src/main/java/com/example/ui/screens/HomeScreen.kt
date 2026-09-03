@@ -43,10 +43,10 @@ fun HomeScreen(
     modifier: Modifier = Modifier
 ) {
     var searchQuery by remember { mutableStateOf("") }
-    var selectedFilter by remember { mutableStateOf("ALL") } // ALL, EPUB, PDF, READING
+    var selectedFilter by remember { mutableStateOf("ALL") } // ALL, READING, COMPLETED
     var bookToDelete by remember { mutableStateOf<BookEntity?>(null) }
 
-    // File picker for EPUB and PDF
+    // File picker for PDF documents
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
@@ -60,9 +60,8 @@ fun HomeScreen(
             val matchesQuery = book.title.contains(searchQuery, ignoreCase = true) ||
                     book.author.contains(searchQuery, ignoreCase = true)
             val matchesFilter = when (selectedFilter) {
-                "EPUB" -> book.fileType.equals("EPUB", ignoreCase = true)
-                "PDF" -> book.fileType.equals("PDF", ignoreCase = true)
                 "READING" -> book.progressPercent > 0 && book.progressPercent < 100
+                "COMPLETED" -> book.progressPercent >= 100
                 else -> true
             }
             matchesQuery && matchesFilter
@@ -77,8 +76,9 @@ fun HomeScreen(
         topBar = {
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                color = MaterialTheme.colorScheme.background,
-                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
+                color = MaterialTheme.colorScheme.surface,
+                shadowElevation = 2.dp,
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
             ) {
                 Row(
                     modifier = Modifier
@@ -89,28 +89,29 @@ fun HomeScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    // Logo & Brand Name
+                    // Logo & Brand Name (LishPDF White & Red Flat)
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         Surface(
-                            modifier = Modifier.size(36.dp),
+                            modifier = Modifier.size(38.dp),
                             shape = RoundedCornerShape(10.dp),
-                            color = MaterialTheme.colorScheme.primary
+                            color = MaterialTheme.colorScheme.primary,
+                            shadowElevation = 3.dp
                         ) {
                             Box(contentAlignment = Alignment.Center) {
                                 Icon(
-                                    imageVector = Icons.Default.MenuBook,
-                                    contentDescription = "BookLish Logo",
+                                    imageVector = Icons.Default.PictureAsPdf,
+                                    contentDescription = "LishPDF Logo",
                                     tint = MaterialTheme.colorScheme.onPrimary,
-                                    modifier = Modifier.size(20.dp)
+                                    modifier = Modifier.size(22.dp)
                                 )
                             }
                         }
                         Column {
                             Text(
-                                text = "BookLish",
+                                text = "LishPDF",
                                 style = MaterialTheme.typography.titleLarge.copy(
                                     fontWeight = FontWeight.Bold,
                                     letterSpacing = (-0.2).sp
@@ -118,7 +119,7 @@ fun HomeScreen(
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                             Text(
-                                text = "EPUB & PDF Reader",
+                                text = "Pembaca & Coretan PDF Pintar",
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     letterSpacing = 0.4.sp
                                 ),
@@ -127,12 +128,11 @@ fun HomeScreen(
                         }
                     }
 
-                    // Import Button
+                    // Import PDF Button
                     Button(
                         onClick = {
                             filePickerLauncher.launch(
                                 arrayOf(
-                                    "application/epub+zip",
                                     "application/pdf",
                                     "application/octet-stream",
                                     "*/*"
@@ -140,8 +140,8 @@ fun HomeScreen(
                             )
                         },
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primaryContainer,
-                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.onPrimary
                         ),
                         shape = RoundedCornerShape(12.dp),
                         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
@@ -149,7 +149,7 @@ fun HomeScreen(
                     ) {
                         Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Buka File", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                        Text("Buka PDF", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
                     }
                 }
             }
@@ -166,7 +166,7 @@ fun HomeScreen(
                 Spacer(modifier = Modifier.height(2.dp))
             }
 
-            // Hero Feature Banner - Clean Minimalism
+            // Hero Feature Banner - Clean White & Red Minimalism
             item {
                 Surface(
                     modifier = Modifier
@@ -174,7 +174,8 @@ fun HomeScreen(
                         .testTag("hero_banner_card"),
                     shape = RoundedCornerShape(20.dp),
                     color = MaterialTheme.colorScheme.surface,
-                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    shadowElevation = 1.dp
                 ) {
                     Column(
                         modifier = Modifier
@@ -188,13 +189,13 @@ fun HomeScreen(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "Membaca Bersih & Fokus",
+                                    text = "Membaca & Coretan Presisi",
                                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                                     color = MaterialTheme.colorScheme.onSurface
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    text = "Dukungan EPUB & PDF offline dengan bolpoin coretan yang mudah diatur ukurannya, stabilo, mode malam & bookmark nyaman.",
+                                    text = "Buka berkas PDF, tulis catatan dengan Bolpoin & Stabilo, dan gunakan gestur 2 jari untuk zoom & geser kanvas bebas.",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -202,15 +203,15 @@ fun HomeScreen(
                             Spacer(modifier = Modifier.width(12.dp))
                             Surface(
                                 shape = RoundedCornerShape(12.dp),
-                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
-                                modifier = Modifier.size(40.dp)
+                                color = MaterialTheme.colorScheme.primaryContainer,
+                                modifier = Modifier.size(42.dp)
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
                                     Icon(
-                                        Icons.Default.AutoStories,
+                                        Icons.Default.Draw,
                                         contentDescription = null,
                                         tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(22.dp)
+                                        modifier = Modifier.size(24.dp)
                                     )
                                 }
                             }
@@ -218,45 +219,45 @@ fun HomeScreen(
 
                         Spacer(modifier = Modifier.height(14.dp))
 
-                        // Offline Status Pill & Feature Badges
+                        // Gestur & Fitur Badges
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            // Offline Mode Active Pill Badge
+                            // 2-Finger Gesture Badge
                             Surface(
                                 shape = RoundedCornerShape(50),
-                                color = MaterialTheme.colorScheme.surfaceVariant,
-                                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.8f))
+                                color = MaterialTheme.colorScheme.primaryContainer,
+                                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f))
                             ) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
                                 ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(7.dp)
-                                            .clip(CircleShape)
-                                            .background(Color(0xFF4ADE80))
+                                    Icon(
+                                        Icons.Default.Pinch,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(14.dp)
                                     )
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
-                                        text = "Offline Mode Active",
+                                        text = "Gestur 2 Jari (Zoom/Pan)",
                                         style = MaterialTheme.typography.labelSmall.copy(
-                                            fontWeight = FontWeight.Medium,
+                                            fontWeight = FontWeight.SemiBold,
                                             letterSpacing = 0.2.sp
                                         ),
-                                        color = MaterialTheme.colorScheme.onSurface
+                                        color = MaterialTheme.colorScheme.primary
                                     )
                                 }
                             }
 
                             // Quick Feature indicators
                             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                MinimalBadge(icon = Icons.Default.Edit, label = "Coret")
+                                MinimalBadge(icon = Icons.Default.Edit, label = "Bolpoin")
                                 MinimalBadge(icon = Icons.Default.Brush, label = "Stabilo")
-                                MinimalBadge(icon = Icons.Default.NightsStay, label = "Night")
+                                MinimalBadge(icon = Icons.Default.Save, label = "Auto-Save")
                             }
                         }
                     }
@@ -274,7 +275,7 @@ fun HomeScreen(
                             .testTag("library_search_input"),
                         placeholder = {
                             Text(
-                                "Cari judul buku atau penulis...",
+                                "Cari judul dokumen PDF...",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                             )
@@ -318,22 +319,17 @@ fun HomeScreen(
                         MinimalFilterChip(
                             selected = selectedFilter == "ALL",
                             onClick = { selectedFilter = "ALL" },
-                            label = "Semua (${books.size})"
-                        )
-                        MinimalFilterChip(
-                            selected = selectedFilter == "EPUB",
-                            onClick = { selectedFilter = "EPUB" },
-                            label = "EPUB"
-                        )
-                        MinimalFilterChip(
-                            selected = selectedFilter == "PDF",
-                            onClick = { selectedFilter = "PDF" },
-                            label = "PDF"
+                            label = "Semua PDF (${books.size})"
                         )
                         MinimalFilterChip(
                             selected = selectedFilter == "READING",
                             onClick = { selectedFilter = "READING" },
                             label = "Sedang Dibaca"
+                        )
+                        MinimalFilterChip(
+                            selected = selectedFilter == "COMPLETED",
+                            onClick = { selectedFilter = "COMPLETED" },
+                            label = "Selesai Dibaca"
                         )
                     }
                 }
@@ -347,7 +343,7 @@ fun HomeScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Koleksi Dokumen",
+                        text = "Dokumen PDF Anda",
                         style = MaterialTheme.typography.titleMedium.copy(
                             fontWeight = FontWeight.Bold,
                             letterSpacing = (-0.1).sp
@@ -360,7 +356,7 @@ fun HomeScreen(
                         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     ) {
                         Text(
-                            text = "${filteredBooks.size} Dokumen",
+                            text = "${filteredBooks.size} Berkas",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
@@ -391,22 +387,22 @@ fun HomeScreen(
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
                                     Icon(
-                                        Icons.Default.MenuBook,
+                                        Icons.Default.PictureAsPdf,
                                         contentDescription = null,
                                         modifier = Modifier.size(28.dp),
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                        tint = MaterialTheme.colorScheme.primary
                                     )
                                 }
                             }
                             Spacer(modifier = Modifier.height(14.dp))
                             Text(
-                                text = "Tidak ada dokumen",
+                                text = "Tidak ada dokumen PDF",
                                 style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "Ketuk 'Buka File' untuk membaca dokumen EPUB atau PDF",
+                                text = "Ketuk 'Buka PDF' untuk membaca dan mencoret dokumen PDF Anda",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -438,14 +434,14 @@ fun HomeScreen(
             shape = RoundedCornerShape(20.dp),
             title = {
                 Text(
-                    "Hapus Dokumen?",
+                    "Hapus Dokumen PDF?",
                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                     color = MaterialTheme.colorScheme.onSurface
                 )
             },
             text = {
                 Text(
-                    "Apakah Anda yakin ingin menghapus \"${target.title}\" dari daftar bacaan?",
+                    "Apakah Anda yakin ingin menghapus \"${target.title}\" beserta semua coretan halamannya?",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -460,7 +456,7 @@ fun HomeScreen(
                     shape = RoundedCornerShape(10.dp),
                     modifier = Modifier.testTag("confirm_delete_book_button")
                 ) {
-                    Text("Hapus", fontWeight = FontWeight.SemiBold)
+                    Text("Hapus Permanen", fontWeight = FontWeight.SemiBold)
                 }
             },
             dismissButton = {
@@ -536,7 +532,6 @@ fun BookItemCard(
     onDelete: () -> Unit
 ) {
     val dateFormat = SimpleDateFormat("dd MMM yyyy", Locale("id", "ID"))
-    val isPdf = book.fileType.equals("PDF", ignoreCase = true)
 
     Surface(
         modifier = Modifier
@@ -545,6 +540,7 @@ fun BookItemCard(
             .testTag("book_card_${book.id}"),
         shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.surface,
+        shadowElevation = 1.dp,
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f))
     ) {
         Row(
@@ -553,13 +549,13 @@ fun BookItemCard(
                 .padding(14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Book Cover Thumbnail
+            // Book Cover Thumbnail in Clean White & Crimson
             Surface(
                 modifier = Modifier
                     .width(52.dp)
                     .height(72.dp),
                 shape = RoundedCornerShape(10.dp),
-                color = if (isPdf) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.primaryContainer,
+                color = MaterialTheme.colorScheme.surfaceVariant,
                 border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
             ) {
                 Box(
@@ -578,7 +574,7 @@ fun BookItemCard(
                             color = MaterialTheme.colorScheme.primary
                         ) {
                             Text(
-                                text = if (isPdf) "PDF" else "EPUB",
+                                text = "PDF",
                                 color = MaterialTheme.colorScheme.onPrimary,
                                 fontSize = 8.sp,
                                 fontWeight = FontWeight.Bold,
@@ -587,14 +583,14 @@ fun BookItemCard(
                         }
 
                         Icon(
-                            imageVector = if (isPdf) Icons.Default.PictureAsPdf else Icons.Default.MenuBook,
+                            imageVector = Icons.Default.PictureAsPdf,
                             contentDescription = null,
-                            tint = if (isPdf) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(22.dp)
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(24.dp)
                         )
 
                         Text(
-                            text = "${book.totalPages}p",
+                            text = "${book.totalPages} hal",
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             fontSize = 8.sp,
                             fontWeight = FontWeight.Medium
@@ -630,7 +626,7 @@ fun BookItemCard(
                     ) {
                         Icon(
                             Icons.Outlined.Delete,
-                            contentDescription = "Hapus Buku",
+                            contentDescription = "Hapus PDF",
                             tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
                             modifier = Modifier.size(16.dp)
                         )
@@ -640,7 +636,7 @@ fun BookItemCard(
                 Spacer(modifier = Modifier.height(2.dp))
 
                 Text(
-                    text = book.author,
+                    text = if (book.author.isNotBlank()) book.author else "Dokumen PDF",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -667,7 +663,7 @@ fun BookItemCard(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        text = if (book.progressPercent > 0) "Dibaca ${book.progressPercent}%" else "Belum dibaca",
+                        text = if (book.progressPercent > 0) "Dibaca ${book.progressPercent}% (${book.currentPage + 1}/${book.totalPages})" else "Belum dibaca (${book.totalPages} hal)",
                         style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
                         color = if (book.progressPercent > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -681,3 +677,4 @@ fun BookItemCard(
         }
     }
 }
+

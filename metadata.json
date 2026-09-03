@@ -1,6 +1,6 @@
 {
-  "name": "BookLish",
-  "description": "Aplikasi pembaca EPUB & PDF offline yang ringan dan mudah digunakan dengan pengaturan ukuran bolpoin & stabilo, bookmark, mode malam, pencarian kata, dan daftar isi.",
+  "name": "LishPDF",
+  "description": "Aplikasi pembaca dokumen PDF offline dengan anotasi bolpoin coretan, stabilo, gestur zoom dan geser 2 jari saat menulis, bookmark, dan daftar isi dengan tema putih bersih.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

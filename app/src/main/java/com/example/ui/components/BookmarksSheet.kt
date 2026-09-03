@@ -23,7 +23,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.BookmarkEntity
-import com.example.ui.theme.*
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -42,7 +41,7 @@ fun BookmarksSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false),
-        containerColor = MinimalDarkSurface,
+        containerColor = MaterialTheme.colorScheme.surface,
         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
         dragHandle = {
             Box(
@@ -51,7 +50,7 @@ fun BookmarksSheet(
                     .width(48.dp)
                     .height(4.dp)
                     .clip(CircleShape)
-                    .background(MinimalBorder)
+                    .background(MaterialTheme.colorScheme.outlineVariant)
             )
         },
         modifier = Modifier.testTag("bookmarks_sheet")
@@ -68,19 +67,19 @@ fun BookmarksSheet(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Daftar Bookmark",
+                    text = "Daftar Penanda Halaman",
                     style = MaterialTheme.typography.titleLarge.copy(
                         fontWeight = FontWeight.Bold,
                         letterSpacing = (-0.2).sp
                     ),
-                    color = MinimalTextPrimary
+                    color = MaterialTheme.colorScheme.onSurface
                 )
 
                 Button(
                     onClick = onOpenAddBookmarkDialog,
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = MinimalPrimaryContainer,
-                        contentColor = MinimalPrimary
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary
                     ),
                     shape = RoundedCornerShape(10.dp),
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
@@ -104,7 +103,7 @@ fun BookmarksSheet(
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Surface(
                             shape = CircleShape,
-                            color = MinimalDarkSurfaceVariant,
+                            color = MaterialTheme.colorScheme.surfaceVariant,
                             modifier = Modifier.size(48.dp)
                         ) {
                             Box(contentAlignment = Alignment.Center) {
@@ -112,7 +111,7 @@ fun BookmarksSheet(
                                     Icons.Default.BookmarkBorder,
                                     contentDescription = null,
                                     modifier = Modifier.size(24.dp),
-                                    tint = MinimalTextMuted
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
@@ -120,13 +119,13 @@ fun BookmarksSheet(
                         Text(
                             text = "Belum ada bookmark",
                             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                            color = MinimalTextPrimary
+                            color = MaterialTheme.colorScheme.onSurface
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = "Ketuk tombol 'Tambah' untuk menandai halaman ini",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MinimalTextMuted
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
@@ -144,8 +143,8 @@ fun BookmarksSheet(
                                 .clickable { onSelectBookmark(bm) }
                                 .testTag("bookmark_item_${bm.id}"),
                             shape = RoundedCornerShape(14.dp),
-                            color = MinimalDarkSurfaceVariant,
-                            border = androidx.compose.foundation.BorderStroke(1.dp, MinimalBorder)
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                         ) {
                             Row(
                                 modifier = Modifier
@@ -158,14 +157,14 @@ fun BookmarksSheet(
                                         Icon(
                                             Icons.Default.Bookmark,
                                             contentDescription = null,
-                                            tint = MinimalPrimary,
+                                            tint = MaterialTheme.colorScheme.primary,
                                             modifier = Modifier.size(16.dp)
                                         )
                                         Spacer(modifier = Modifier.width(6.dp))
                                         Text(
                                             text = bm.chapterTitle,
                                             style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-                                            color = MinimalPrimary
+                                            color = MaterialTheme.colorScheme.primary
                                         )
                                     }
 
@@ -174,7 +173,7 @@ fun BookmarksSheet(
                                         Text(
                                             text = "Catatan: ${bm.note}",
                                             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                                            color = MinimalTextPrimary
+                                            color = MaterialTheme.colorScheme.onSurface
                                         )
                                     }
 
@@ -182,14 +181,14 @@ fun BookmarksSheet(
                                     Text(
                                         text = "\"${bm.excerpt.take(90)}…\"",
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = MinimalTextSecondary
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
 
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
                                         text = dateFormat.format(Date(bm.createdAt)),
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = MinimalTextMuted
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                                     )
                                 }
 
@@ -200,7 +199,7 @@ fun BookmarksSheet(
                                     Icon(
                                         Icons.Default.DeleteOutline,
                                         contentDescription = "Hapus Bookmark",
-                                        tint = MinimalError.copy(alpha = 0.8f),
+                                        tint = MaterialTheme.colorScheme.error,
                                         modifier = Modifier.size(18.dp)
                                     )
                                 }
@@ -212,3 +211,4 @@ fun BookmarksSheet(
         }
     }
 }
+

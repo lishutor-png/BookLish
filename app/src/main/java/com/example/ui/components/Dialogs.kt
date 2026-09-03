@@ -9,7 +9,6 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.ui.theme.*
 
 @Composable
 fun AddBookmarkDialog(
@@ -21,13 +20,13 @@ fun AddBookmarkDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = MinimalDarkSurface,
+        containerColor = MaterialTheme.colorScheme.surface,
         shape = RoundedCornerShape(20.dp),
         title = {
             Text(
-                "Tambah Bookmark",
+                "Tambah Penanda Halaman",
                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                color = MinimalTextPrimary
+                color = MaterialTheme.colorScheme.onSurface
             )
         },
         text = {
@@ -35,21 +34,21 @@ fun AddBookmarkDialog(
                 Text(
                     text = "Tandai: $chapterTitle",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MinimalPrimary
+                    color = MaterialTheme.colorScheme.primary
                 )
                 Spacer(modifier = Modifier.height(12.dp))
                 OutlinedTextField(
                     value = noteText,
                     onValueChange = { noteText = it },
-                    label = { Text("Catatan Refleksi (Opsional)", color = MinimalTextMuted) },
-                    placeholder = { Text("Misal: Bagian penting untuk kuis esok...", color = MinimalTextMuted.copy(alpha = 0.6f)) },
+                    label = { Text("Catatan Refleksi (Opsional)", color = MaterialTheme.colorScheme.onSurfaceVariant) },
+                    placeholder = { Text("Misal: Bagian penting untuk revisi...", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)) },
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = MinimalDarkSurfaceVariant,
-                        unfocusedContainerColor = MinimalDarkSurfaceVariant,
-                        focusedBorderColor = MinimalPrimary,
-                        unfocusedBorderColor = MinimalBorder,
-                        focusedTextColor = MinimalTextPrimary,
-                        unfocusedTextColor = MinimalTextPrimary
+                        focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
+                        focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                        unfocusedTextColor = MaterialTheme.colorScheme.onSurface
                     ),
                     modifier = Modifier.fillMaxWidth().testTag("bookmark_note_input"),
                     shape = RoundedCornerShape(12.dp),
@@ -61,8 +60,8 @@ fun AddBookmarkDialog(
             Button(
                 onClick = { onConfirm(noteText) },
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = MinimalPrimary,
-                    contentColor = MinimalDarkBackground
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary
                 ),
                 shape = RoundedCornerShape(10.dp),
                 modifier = Modifier.testTag("confirm_add_bookmark_button")
@@ -75,7 +74,7 @@ fun AddBookmarkDialog(
                 onClick = onDismiss,
                 shape = RoundedCornerShape(10.dp)
             ) {
-                Text("Batal", color = MinimalTextSecondary)
+                Text("Batal", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     )
@@ -88,26 +87,26 @@ fun ClearPageDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = MinimalDarkSurface,
+        containerColor = MaterialTheme.colorScheme.surface,
         shape = RoundedCornerShape(20.dp),
         title = {
             Text(
                 "Hapus Semua Coretan?",
                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                color = MinimalTextPrimary
+                color = MaterialTheme.colorScheme.onSurface
             )
         },
         text = {
             Text(
                 "Seluruh coretan bolpoin dan stabilo pada halaman ini akan dihapus. Anda tetap dapat menggunakan Undo jika diperlukan.",
                 style = MaterialTheme.typography.bodyMedium,
-                color = MinimalTextSecondary
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         },
         confirmButton = {
             Button(
                 onClick = onConfirm,
-                colors = ButtonDefaults.buttonColors(containerColor = MinimalError),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
                 shape = RoundedCornerShape(10.dp),
                 modifier = Modifier.testTag("confirm_clear_page_button")
             ) {
@@ -119,8 +118,9 @@ fun ClearPageDialog(
                 onClick = onDismiss,
                 shape = RoundedCornerShape(10.dp)
             ) {
-                Text("Batal", color = MinimalTextSecondary)
+                Text("Batal", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     )
 }
+

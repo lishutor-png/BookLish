@@ -24,7 +24,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.ui.theme.*
 import com.example.ui.viewmodel.SearchResult
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -40,7 +39,7 @@ fun SearchSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false),
-        containerColor = MinimalDarkSurface,
+        containerColor = MaterialTheme.colorScheme.surface,
         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
         dragHandle = {
             Box(
@@ -49,7 +48,7 @@ fun SearchSheet(
                     .width(48.dp)
                     .height(4.dp)
                     .clip(CircleShape)
-                    .background(MinimalBorder)
+                    .background(MaterialTheme.colorScheme.outlineVariant)
             )
         },
         modifier = Modifier.testTag("search_sheet")
@@ -61,12 +60,12 @@ fun SearchSheet(
                 .navigationBarsPadding()
         ) {
             Text(
-                text = "Pencarian Kata",
+                text = "Pencarian Dokumen",
                 style = MaterialTheme.typography.titleLarge.copy(
                     fontWeight = FontWeight.Bold,
                     letterSpacing = (-0.2).sp
                 ),
-                color = MinimalTextPrimary
+                color = MaterialTheme.colorScheme.onSurface
             )
 
             Spacer(modifier = Modifier.height(14.dp))
@@ -81,7 +80,7 @@ fun SearchSheet(
                 placeholder = {
                     Text(
                         "Ketik kata atau frasa yang dicari...",
-                        color = MinimalTextMuted,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                         fontSize = 14.sp
                     )
                 },
@@ -89,7 +88,7 @@ fun SearchSheet(
                     Icon(
                         Icons.Default.Search,
                         contentDescription = "Cari",
-                        tint = MinimalPrimary
+                        tint = MaterialTheme.colorScheme.primary
                     )
                 },
                 trailingIcon = {
@@ -98,18 +97,18 @@ fun SearchSheet(
                             Icon(
                                 Icons.Default.Close,
                                 contentDescription = "Hapus Pencarian",
-                                tint = MinimalTextSecondary
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
                 },
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedContainerColor = MinimalDarkSurfaceVariant,
-                    unfocusedContainerColor = MinimalDarkSurfaceVariant,
-                    focusedBorderColor = MinimalPrimary,
-                    unfocusedBorderColor = MinimalBorder,
-                    focusedTextColor = MinimalTextPrimary,
-                    unfocusedTextColor = MinimalTextPrimary
+                    focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                    unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
+                    focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                    unfocusedTextColor = MaterialTheme.colorScheme.onSurface
                 ),
                 singleLine = true,
                 shape = RoundedCornerShape(14.dp)
@@ -126,7 +125,7 @@ fun SearchSheet(
                 ) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(32.dp),
-                        color = MinimalPrimary,
+                        color = MaterialTheme.colorScheme.primary,
                         strokeWidth = 2.5.dp
                     )
                 }
@@ -137,7 +136,7 @@ fun SearchSheet(
                         fontWeight = FontWeight.SemiBold,
                         letterSpacing = 0.5.sp
                     ),
-                    color = MinimalPrimary,
+                    color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.padding(bottom = 8.dp)
                 )
 
@@ -151,7 +150,7 @@ fun SearchSheet(
                         Text(
                             text = "Tidak ada hasil untuk \"$searchQuery\"",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = MinimalTextMuted
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 } else {
@@ -180,7 +179,7 @@ fun SearchSheet(
                     Text(
                         text = "Ketik minimal 2 huruf untuk mulai mencari di dokumen",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MinimalTextMuted
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
@@ -200,18 +199,20 @@ fun SearchResultItemCard(
             .clickable(onClick = onClick)
             .testTag("search_result_item_${result.pageOrChapterIndex}"),
         shape = RoundedCornerShape(12.dp),
-        color = MinimalDarkSurfaceVariant,
-        border = androidx.compose.foundation.BorderStroke(1.dp, MinimalBorder)
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Text(
                 text = result.pageOrChapterTitle,
                 style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                color = MinimalPrimary
+                color = MaterialTheme.colorScheme.primary
             )
             Spacer(modifier = Modifier.height(4.dp))
 
             // Highlight the searched keyword in snippet
+            val primaryContainerColor = MaterialTheme.colorScheme.primaryContainer
+            val primaryColor = MaterialTheme.colorScheme.primary
             val annotatedSnippet = buildAnnotatedString {
                 val snippetText = result.snippet
                 var lastIdx = 0
@@ -222,8 +223,8 @@ fun SearchResultItemCard(
                     }
                     withStyle(
                         style = SpanStyle(
-                            background = MinimalPrimaryContainer,
-                            color = MinimalPrimary,
+                            background = primaryContainerColor,
+                            color = primaryColor,
                             fontWeight = FontWeight.Bold
                         )
                     ) {
@@ -239,8 +240,9 @@ fun SearchResultItemCard(
             Text(
                 text = annotatedSnippet,
                 style = MaterialTheme.typography.bodySmall,
-                color = MinimalTextPrimary
+                color = MaterialTheme.colorScheme.onSurface
             )
         }
     }
 }
+

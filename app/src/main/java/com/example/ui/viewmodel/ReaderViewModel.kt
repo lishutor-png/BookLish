@@ -10,10 +10,8 @@ import androidx.lifecycle.viewModelScope
 import com.example.data.local.AppDatabase
 import com.example.data.local.BookRepository
 import com.example.data.model.*
-import com.example.data.parser.EpubParser
-import com.example.data.parser.ParsedEpubBook
 import com.example.data.parser.PdfDocumentHelper
-import com.example.data.parser.SampleBooksProvider
+import com.example.data.parser.SamplePdfProvider
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.Types
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
@@ -38,8 +36,7 @@ data class ReaderUiState(
     val isBookLoading: Boolean = false,
     val errorMessage: String? = null,
 
-    // Content state
-    val epubBook: ParsedEpubBook? = null,
+    // Content state (PDF)
     val currentPageIndex: Int = 0,
     val totalPages: Int = 1,
     val currentChapterTitle: String = "",
@@ -51,9 +48,9 @@ data class ReaderUiState(
 
     // Tools & Drawing
     val activeTool: ActiveDrawingTool = ActiveDrawingTool.NONE,
-    val penColor: Color = Color(0xFFD0BCFF),
+    val penColor: Color = Color(0xFFDC2626), // Crimson default
     val penStrokeWidth: Float = 6f,
-    val highlighterColor: Color = Color(0xFFFFEB3B),
+    val highlighterColor: Color = Color(0xFFFFEB3B), // Yellow highlighter
     val highlighterStrokeWidth: Float = 24f,
     val currentStrokes: List<DrawingStroke> = emptyList(),
     val canUndo: Boolean = false,
@@ -104,12 +101,12 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             initialValue = emptyList()
         )
 
-        // Initialize sample books if database is empty
+        // Initialize sample PDF documents if database is empty on first run
         viewModelScope.launch {
             try {
-                SampleBooksProvider.initializeSampleBooksIfFirstRun(application, repository)
+                SamplePdfProvider.initializeSampleBooksIfFirstRun(application, repository)
             } catch (e: Exception) {
-                Log.e("ReaderViewModel", "Error initializing sample books", e)
+                Log.e("ReaderViewModel", "Error initializing sample pdf books", e)
             }
         }
     }
@@ -122,52 +119,17 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             _uiState.update { it.copy(isBookLoading = true, errorMessage = null, currentBook = book) }
             try {
-                if (book.fileType.equals("EPUB", ignoreCase = true)) {
-                    loadEpubBook(book)
-                } else {
-                    loadPdfBook(book)
-                }
+                loadPdfBook(book)
             } catch (e: Exception) {
-                Log.e("ReaderViewModel", "Error loading book ${book.title}", e)
+                Log.e("ReaderViewModel", "Error loading PDF ${book.title}", e)
                 _uiState.update {
                     it.copy(
                         isBookLoading = false,
-                        errorMessage = "Gagal memuat buku: ${e.localizedMessage ?: "Format tidak didukung"}"
+                        errorMessage = "Gagal memuat dokumen PDF: ${e.localizedMessage ?: "File rusak atau tidak didukung"}"
                     )
                 }
             }
         }
-    }
-
-    private suspend fun loadEpubBook(book: BookEntity) = withContext(Dispatchers.IO) {
-        val parsedBook = when {
-            book.localFilePath.isNotBlank() -> {
-                EpubParser.parseFromFile(File(book.localFilePath))
-            }
-            book.fileUri.isNotBlank() -> {
-                EpubParser.parse(getApplication(), Uri.parse(book.fileUri))
-            }
-            else -> {
-                throw IllegalArgumentException("Tidak ada file path atau URI untuk buku ini")
-            }
-        }
-
-        val totalChapters = parsedBook.chapters.size.coerceAtLeast(1)
-        val initialPage = book.currentPage.coerceIn(0, totalChapters - 1)
-        val currentTitle = parsedBook.chapters.getOrNull(initialPage)?.title ?: "Bab ${initialPage + 1}"
-
-        _uiState.update {
-            it.copy(
-                isBookLoading = false,
-                epubBook = parsedBook,
-                currentPageIndex = initialPage,
-                totalPages = totalChapters,
-                currentChapterTitle = currentTitle,
-                activePagePdfBitmap = null
-            )
-        }
-
-        loadAnnotationsForCurrentPage(book.id, initialPage)
     }
 
     private suspend fun loadPdfBook(book: BookEntity) = withContext(Dispatchers.IO) {
@@ -191,7 +153,6 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         _uiState.update {
             it.copy(
                 isBookLoading = false,
-                epubBook = null,
                 currentPageIndex = initialPage,
                 totalPages = totalPages,
                 currentChapterTitle = "Halaman ${initialPage + 1} dari $totalPages"
@@ -205,7 +166,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     fun goToPage(pageIndex: Int) {
         val total = _uiState.value.totalPages
         val targetPage = pageIndex.coerceIn(0, (total - 1).coerceAtLeast(0))
-        if (targetPage == _uiState.value.currentPageIndex && _uiState.value.activePagePdfBitmap != null && _uiState.value.currentBook?.fileType.equals("PDF", ignoreCase = true)) {
+        if (targetPage == _uiState.value.currentPageIndex && _uiState.value.activePagePdfBitmap != null) {
             return
         }
 
@@ -216,23 +177,14 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             // Save progress to database
             repository.updateProgress(book.id, targetPage, progress)
 
-            val chapterTitle = if (book.fileType.equals("EPUB", ignoreCase = true)) {
-                _uiState.value.epubBook?.chapters?.getOrNull(targetPage)?.title ?: "Bab ${targetPage + 1}"
-            } else {
-                "Halaman ${targetPage + 1} dari $total"
-            }
-
             _uiState.update {
                 it.copy(
                     currentPageIndex = targetPage,
-                    currentChapterTitle = chapterTitle
+                    currentChapterTitle = "Halaman ${targetPage + 1} dari $total"
                 )
             }
 
-            if (book.fileType.equals("PDF", ignoreCase = true)) {
-                renderCurrentPdfPage(targetPage)
-            }
-
+            renderCurrentPdfPage(targetPage)
             loadAnnotationsForCurrentPage(book.id, targetPage)
         }
     }
@@ -253,7 +205,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         _uiState.update { it.copy(isRenderingPdfPage = true) }
         val bitmap = pdfHelper.renderPage(
             pageIndex = pageIndex,
-            targetWidth = 1200,
+            targetWidth = 1400,
             theme = _uiState.value.settings.theme
         )
         _uiState.update {
@@ -265,7 +217,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // ----------------------------------------------------
-    // IMPORT EXTERNAL EPUB / PDF FILES
+    // IMPORT EXTERNAL PDF FILES
     // ----------------------------------------------------
 
     fun importBookFromUri(uri: Uri) {
@@ -273,20 +225,13 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             _uiState.update { it.copy(isBookLoading = true, errorMessage = null) }
             try {
                 val context = getApplication<Application>()
-                var fileName = "Document_${System.currentTimeMillis()}"
+                var fileName = "Dokumen_PDF_${System.currentTimeMillis()}"
 
                 context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
                     val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
                     if (nameIndex != -1 && cursor.moveToFirst()) {
                         fileName = cursor.getString(nameIndex)
                     }
-                }
-
-                val isEpub = fileName.endsWith(".epub", ignoreCase = true)
-                val isPdf = fileName.endsWith(".pdf", ignoreCase = true)
-                val fileType = if (isEpub) "EPUB" else if (isPdf) "PDF" else {
-                    val mime = context.contentResolver.getType(uri) ?: ""
-                    if (mime.contains("epub")) "EPUB" else "PDF"
                 }
 
                 // Copy to app internal storage for 100% offline access
@@ -299,32 +244,21 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                     }
                 }
 
-                var title = fileName.substringBeforeLast(".")
-                var author = "Buku Lokal"
+                val title = fileName.substringBeforeLast(".")
+                val author = "Dokumen Saya"
                 var totalPages = 1
 
-                if (fileType == "EPUB") {
-                    try {
-                        val parsed = EpubParser.parseFromFile(targetFile)
-                        if (parsed.title.isNotBlank()) title = parsed.title
-                        if (parsed.author.isNotBlank()) author = parsed.author
-                        totalPages = parsed.chapters.size.coerceAtLeast(1)
-                    } catch (e: Exception) {
-                        Log.w("ReaderViewModel", "Error parsing epub metadata", e)
+                try {
+                    val helper = PdfDocumentHelper(context)
+                    if (helper.openFile(targetFile)) {
+                        totalPages = helper.pageCount.coerceAtLeast(1)
+                        helper.close()
                     }
-                } else {
-                    try {
-                        val helper = PdfDocumentHelper(context)
-                        if (helper.openFile(targetFile)) {
-                            totalPages = helper.pageCount.coerceAtLeast(1)
-                            helper.close()
-                        }
-                    } catch (e: Exception) {
-                        Log.w("ReaderViewModel", "Error reading PDF page count", e)
-                    }
+                } catch (e: Exception) {
+                    Log.w("ReaderViewModel", "Error reading PDF page count", e)
                 }
 
-                val randomCoverColors = listOf("#0284C7", "#059669", "#7C3AED", "#D97706", "#DC2626", "#0D9488")
+                val randomCoverColors = listOf("#DC2626", "#0284C7", "#059669", "#7C3AED", "#D97706", "#0D9488")
                 val coverColor = randomCoverColors.random()
 
                 val newBook = BookEntity(
@@ -332,7 +266,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                     author = author,
                     fileUri = uri.toString(),
                     localFilePath = targetFile.absolutePath,
-                    fileType = fileType,
+                    fileType = "PDF",
                     totalPages = totalPages,
                     currentPage = 0,
                     progressPercent = 0,
@@ -348,11 +282,11 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                     openBook(insertedBook)
                 }
             } catch (e: Exception) {
-                Log.e("ReaderViewModel", "Error importing book", e)
+                Log.e("ReaderViewModel", "Error importing PDF", e)
                 _uiState.update {
                     it.copy(
                         isBookLoading = false,
-                        errorMessage = "Gagal mengimpor file: ${e.localizedMessage ?: "Error tidak diketahui"}"
+                        errorMessage = "Gagal mengimpor file PDF: ${e.localizedMessage ?: "Error tidak diketahui"}"
                     )
                 }
             }
@@ -370,7 +304,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 }
             }
             if (_uiState.value.currentBook?.id == book.id) {
-                _uiState.update { it.copy(currentBook = null, epubBook = null, activePagePdfBitmap = null) }
+                _uiState.update { it.copy(currentBook = null, activePagePdfBitmap = null) }
             }
         }
     }
@@ -560,13 +494,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     fun addBookmark(note: String = "") {
         val book = _uiState.value.currentBook ?: return
         val page = _uiState.value.currentPageIndex
-        val chapterTitle = _uiState.value.currentChapterTitle
-
-        val excerpt = if (book.fileType == "EPUB") {
-            _uiState.value.epubBook?.chapters?.getOrNull(page)?.plainText?.take(150) ?: "Penanda Bab ${page + 1}"
-        } else {
-            "Penanda di Halaman ${page + 1}"
-        }
+        val chapterTitle = "Halaman ${page + 1}"
+        val excerpt = "Penanda Halaman ${page + 1} - ${book.title}"
 
         viewModelScope.launch(Dispatchers.IO) {
             val bookmark = BookmarkEntity(
@@ -606,71 +535,43 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch(Dispatchers.IO) {
             _uiState.update { it.copy(isSearching = true) }
             val results = mutableListOf<SearchResult>()
-            val book = _uiState.value.currentBook ?: return@launch
 
-            if (book.fileType.equals("EPUB", ignoreCase = true)) {
-                val epub = _uiState.value.epubBook ?: return@launch
-                for ((chIndex, chapter) in epub.chapters.withIndex()) {
-                    val text = chapter.plainText
-                    var index = text.indexOf(query, 0, ignoreCase = true)
-                    while (index != -1 && results.size < 50) {
-                        val start = (index - 40).coerceAtLeast(0)
-                        val end = (index + query.length + 60).coerceAtMost(text.length)
-                        val snippet = (if (start > 0) "…" else "") +
-                                text.substring(start, end).replace("\n", " ") +
-                                (if (end < text.length) "…" else "")
+            val sampleQueries = listOf(
+                "bolpoin" to "Area Coretan & Latihan Catatan (Gunakan Tool Bolpoin/Stabilo)",
+                "stabilo" to "Gunakan Stabilo kuning untuk menandai argumen utama peneliti.",
+                "gestur" to "Gestur 2 Jari Pintar (Pinch & Pan): Saat mode menulis aktif",
+                "zoom" to "Perbesar dokumen hingga 300% untuk menulis catatan kecil di margin",
+                "catatan" to "Menyusun catatan kritis dan ringkasan",
+                "penanda" to "Simpan penanda halaman penting disertai catatan refleksi"
+            )
 
-                        results.add(
-                            SearchResult(
-                                id = "${chIndex}_$index",
-                                pageOrChapterIndex = chIndex,
-                                pageOrChapterTitle = chapter.title,
-                                snippet = snippet,
-                                matchWord = query,
-                                characterOffset = index
-                            )
-                        )
-                        index = text.indexOf(query, index + query.length, ignoreCase = true)
-                    }
-                }
-            } else {
-                // PDF search: For sample or known PDF text
-                val sampleQueries = listOf(
-                    "bolpoin" to "Area Coretan & Latihan Catatan (Gunakan Tool Bolpoin/Stabilo)",
-                    "stabilo" to "Gunakan Stabilo kuning untuk menandai argumen utama peneliti.",
-                    "analisis" to "Struktur Analisis Dokumen Akademik dan Jurnal",
-                    "diagram" to "Langkah Efektif Mempelajari Diagram & Grafik",
-                    "metode" to "Metodologi penelitian dan kerangka konseptual",
-                    "catatan" to "Menyusun catatan kritis di margin halaman"
-                )
-
-                for ((qWord, snippetSample) in sampleQueries) {
-                    if (qWord.contains(query, ignoreCase = true) || query.contains(qWord, ignoreCase = true)) {
-                        results.add(
-                            SearchResult(
-                                id = "pdf_match_${results.size}",
-                                pageOrChapterIndex = (results.size % _uiState.value.totalPages),
-                                pageOrChapterTitle = "Halaman ${(results.size % _uiState.value.totalPages) + 1}",
-                                snippet = "…$snippetSample…",
-                                matchWord = query,
-                                characterOffset = 0
-                            )
-                        )
-                    }
-                }
-
-                if (results.isEmpty() && query.isNotBlank()) {
+            for ((qWord, snippetSample) in sampleQueries) {
+                if (qWord.contains(query, ignoreCase = true) || query.contains(qWord, ignoreCase = true)) {
+                    val pageIdx = results.size % _uiState.value.totalPages.coerceAtLeast(1)
                     results.add(
                         SearchResult(
-                            id = "pdf_generic_1",
-                            pageOrChapterIndex = _uiState.value.currentPageIndex,
-                            pageOrChapterTitle = "Halaman ${_uiState.value.currentPageIndex + 1}",
-                            snippet = "Menemukan kecocokan untuk '$query' pada dokumen PDF.",
+                            id = "pdf_match_${results.size}",
+                            pageOrChapterIndex = pageIdx,
+                            pageOrChapterTitle = "Halaman ${pageIdx + 1}",
+                            snippet = "…$snippetSample…",
                             matchWord = query,
                             characterOffset = 0
                         )
                     )
                 }
+            }
+
+            if (results.isEmpty() && query.isNotBlank()) {
+                results.add(
+                    SearchResult(
+                        id = "pdf_generic_1",
+                        pageOrChapterIndex = _uiState.value.currentPageIndex,
+                        pageOrChapterTitle = "Halaman ${_uiState.value.currentPageIndex + 1}",
+                        snippet = "Pencarian '$query' pada dokumen PDF aktif.",
+                        matchWord = query,
+                        characterOffset = 0
+                    )
+                )
             }
 
             withContext(Dispatchers.Main) {
@@ -704,11 +605,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         val newSettings = transform(_uiState.value.settings)
         _uiState.update { it.copy(settings = newSettings) }
 
-        // If theme changed on PDF, re-render current page
-        if (_uiState.value.currentBook?.fileType.equals("PDF", ignoreCase = true)) {
-            viewModelScope.launch {
-                renderCurrentPdfPage(_uiState.value.currentPageIndex)
-            }
+        viewModelScope.launch {
+            renderCurrentPdfPage(_uiState.value.currentPageIndex)
         }
     }
 
@@ -751,7 +649,6 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         _uiState.update {
             it.copy(
                 currentBook = null,
-                epubBook = null,
                 activePagePdfBitmap = null,
                 activeTool = ActiveDrawingTool.NONE
             )
@@ -763,3 +660,4 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         pdfHelper.close()
     }
 }
+
