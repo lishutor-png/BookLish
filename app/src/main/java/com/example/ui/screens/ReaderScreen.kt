@@ -229,13 +229,9 @@ fun ReaderScreen(
             }
         }
 
-        // Floating Zoom Controls & 4-Directional Arrow Pan Controller (Bottom Right)
-        val isControllerVisible = scale > 1.02f || uiState.activeTool != ActiveDrawingTool.NONE || uiState.isControlsVisible
-        val controllerBottomPadding = when {
-            uiState.activeTool != ActiveDrawingTool.NONE -> 142.dp
-            uiState.isControlsVisible -> 108.dp
-            else -> 24.dp
-        }
+        // Floating Zoom Controls & 4-Directional Arrow Pan Controller (When not in drawing mode)
+        val isControllerVisible = (scale > 1.02f || uiState.isControlsVisible) && uiState.activeTool == ActiveDrawingTool.NONE
+        val controllerBottomPadding = if (uiState.isControlsVisible) 108.dp else 24.dp
 
         AnimatedVisibility(
             visible = isControllerVisible,
@@ -259,7 +255,7 @@ fun ReaderScreen(
                     scale = 1.0f
                     offset = Offset.Zero
                 },
-                isDrawingActive = uiState.activeTool != ActiveDrawingTool.NONE
+                isDrawingActive = false
             )
         }
 
@@ -290,7 +286,7 @@ fun ReaderScreen(
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "Gunakan tombol panah di kanan bawah atau 2 jari untuk geser",
+                        text = "Gunakan tombol panah di bilah bawah atau 2 jari untuk geser",
                         style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
                         color = MaterialTheme.colorScheme.onSurface
                     )
@@ -487,7 +483,20 @@ fun ReaderScreen(
                     onSelectHighlighterStrokeWidth = { width -> viewModel.setHighlighterStrokeWidth(width) },
                     onUndo = { viewModel.undoDrawing() },
                     onRedo = { viewModel.redoDrawing() },
-                    onClearPage = { viewModel.setClearPageDialogOpen(true) }
+                    onClearPage = { viewModel.setClearPageDialogOpen(true) },
+                    scale = scale,
+                    offset = offset,
+                    onScaleChange = { newScale ->
+                        scale = newScale
+                        if (newScale <= 1.02f) offset = Offset.Zero
+                    },
+                    onOffsetChange = { newOffset ->
+                        offset = newOffset
+                    },
+                    onResetZoom = {
+                        scale = 1.0f
+                        offset = Offset.Zero
+                    }
                 )
             }
 

@@ -30,7 +30,7 @@ class ExampleUnitTest {
         assertEquals(10, book.totalPages)
         assertEquals(4, book.currentPage)
         assertEquals(50, book.progressPercent)
-        assertTrue(book.isPdf)
+        assertEquals("PDF", book.fileType)
     }
 
     @Test
@@ -110,8 +110,8 @@ class ExampleUnitTest {
     fun readingSettings_defaults_areCleanWhite() {
         val settings = ReadingSettings()
         assertEquals(ReadingTheme.LIGHT, settings.theme)
-        assertTrue(settings.isLightStatusBar)
-        assertTrue(settings.keepScreenOn)
+        assertEquals(16f, settings.fontSizeSp, 0.01f)
+        assertEquals(ReaderFontFamily.SANS_SERIF, settings.fontFamily)
     }
 
     @Test
@@ -121,5 +121,130 @@ class ExampleUnitTest {
         assertTrue(tools.contains(ActiveDrawingTool.PEN))
         assertTrue(tools.contains(ActiveDrawingTool.HIGHLIGHTER))
         assertTrue(tools.contains(ActiveDrawingTool.ERASER))
+    }
+
+    @Test
+    fun drawingStroke_penVsHighlighter_propertiesAreCorrect() {
+        val penStroke = DrawingStroke(
+            points = listOf(DrawingPoint(10f, 10f), DrawingPoint(20f, 20f)),
+            color = Color(0xFFDC2626),
+            strokeWidth = 6f,
+            isHighlighter = false,
+            alpha = 1.0f
+        )
+        assertFalse(penStroke.isHighlighter)
+        assertEquals(1.0f, penStroke.alpha, 0.001f)
+        assertEquals(6f, penStroke.strokeWidth, 0.001f)
+
+        val highlighterStroke = DrawingStroke(
+            points = listOf(DrawingPoint(10f, 10f), DrawingPoint(80f, 10f)),
+            color = Color(0xFFFFEB3B),
+            strokeWidth = 24f,
+            isHighlighter = true,
+            alpha = 0.35f
+        )
+        assertTrue(highlighterStroke.isHighlighter)
+        assertEquals(0.35f, highlighterStroke.alpha, 0.001f)
+        assertEquals(24f, highlighterStroke.strokeWidth, 0.001f)
+    }
+
+    @Test
+    fun eraser_distanceProximity_identifiesTargetStroke() {
+        val stroke1 = DrawingStroke(
+            id = 1L,
+            points = listOf(DrawingPoint(100f, 100f), DrawingPoint(110f, 110f)),
+            color = Color.Black,
+            strokeWidth = 5f
+        )
+        val stroke2 = DrawingStroke(
+            id = 2L,
+            points = listOf(DrawingPoint(500f, 500f), DrawingPoint(510f, 510f)),
+            color = Color.Blue,
+            strokeWidth = 5f
+        )
+        val strokes = listOf(stroke1, stroke2)
+
+        val touchNearStroke1 = DrawingPoint(105f, 105f)
+        val tolerance = 30f
+        val hitStroke = strokes.lastOrNull { stroke ->
+            stroke.points.any { p ->
+                val dx = p.x - touchNearStroke1.x
+                val dy = p.y - touchNearStroke1.y
+                dx * dx + dy * dy < tolerance * tolerance
+            }
+        }
+
+        assertNotNull(hitStroke)
+        assertEquals(1L, hitStroke?.id)
+    }
+
+    @Test
+    fun readingTheme_toggleCycle_coversAllThemes() {
+        var currentTheme = ReadingTheme.LIGHT
+
+        currentTheme = when (currentTheme) {
+            ReadingTheme.LIGHT -> ReadingTheme.SEPIA
+            ReadingTheme.SEPIA -> ReadingTheme.NIGHT
+            ReadingTheme.NIGHT -> ReadingTheme.OLED
+            ReadingTheme.OLED -> ReadingTheme.LIGHT
+        }
+        assertEquals(ReadingTheme.SEPIA, currentTheme)
+
+        currentTheme = when (currentTheme) {
+            ReadingTheme.LIGHT -> ReadingTheme.SEPIA
+            ReadingTheme.SEPIA -> ReadingTheme.NIGHT
+            ReadingTheme.NIGHT -> ReadingTheme.OLED
+            ReadingTheme.OLED -> ReadingTheme.LIGHT
+        }
+        assertEquals(ReadingTheme.NIGHT, currentTheme)
+
+        currentTheme = when (currentTheme) {
+            ReadingTheme.LIGHT -> ReadingTheme.SEPIA
+            ReadingTheme.SEPIA -> ReadingTheme.NIGHT
+            ReadingTheme.NIGHT -> ReadingTheme.OLED
+            ReadingTheme.OLED -> ReadingTheme.LIGHT
+        }
+        assertEquals(ReadingTheme.OLED, currentTheme)
+
+        currentTheme = when (currentTheme) {
+            ReadingTheme.LIGHT -> ReadingTheme.SEPIA
+            ReadingTheme.SEPIA -> ReadingTheme.NIGHT
+            ReadingTheme.NIGHT -> ReadingTheme.OLED
+            ReadingTheme.OLED -> ReadingTheme.LIGHT
+        }
+        assertEquals(ReadingTheme.LIGHT, currentTheme)
+    }
+
+    @Test
+    fun pageIndex_navigationBounds_cannotExceedLimits() {
+        val totalPages = 5
+        var currentPage = 0
+
+        // Attempt previous page when at 0
+        val prevAttempt = if (currentPage > 0) currentPage - 1 else currentPage
+        assertEquals(0, prevAttempt)
+
+        // Advance to last page
+        currentPage = 4
+        val nextAttempt = if (currentPage < totalPages - 1) currentPage + 1 else currentPage
+        assertEquals(4, nextAttempt)
+    }
+
+    @Test
+    fun bookmarkEntity_withNote_storesCorrectly() {
+        val bookmark = BookmarkEntity(
+            id = 10L,
+            bookId = 1L,
+            pageIndex = 2,
+            chapterTitle = "Halaman 3",
+            excerpt = "Penanda Halaman 3 - Dokumen Panduan",
+            note = "Rumus penting bab 2",
+            createdAt = System.currentTimeMillis()
+        )
+
+        assertEquals(1L, bookmark.bookId)
+        assertEquals(2, bookmark.pageIndex)
+        assertEquals("Rumus penting bab 2", bookmark.note)
+        assertEquals("Halaman 3", bookmark.chapterTitle)
     }
 }

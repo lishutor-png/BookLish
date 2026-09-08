@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -20,6 +21,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -45,6 +47,11 @@ fun DrawingToolbar(
     onUndo: () -> Unit,
     onRedo: () -> Unit,
     onClearPage: () -> Unit,
+    scale: Float = 1.0f,
+    offset: Offset = Offset.Zero,
+    onScaleChange: (Float) -> Unit = {},
+    onOffsetChange: (Offset) -> Unit = {},
+    onResetZoom: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val penColors = listOf(
@@ -79,9 +86,165 @@ fun DrawingToolbar(
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            // Dedicated Pan Arrows & Zoom Controls Bar during annotation
+            val panStep = 120f
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp)
+                    .testTag("drawing_pan_zoom_bar")
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Left: 4-Directional Arrow Buttons to Pan Canvas
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = "Geser:",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(end = 2.dp)
+                        )
+
+                        // ⬅️ Kiri
+                        FilledTonalIconButton(
+                            onClick = { onOffsetChange(offset + Offset(panStep, 0f)) },
+                            shape = RoundedCornerShape(8.dp),
+                            colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                containerColor = MaterialTheme.colorScheme.surface,
+                                contentColor = MaterialTheme.colorScheme.onSurface
+                            ),
+                            modifier = Modifier.size(32.dp).testTag("drawing_pan_left")
+                        ) {
+                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "Geser Kiri", modifier = Modifier.size(20.dp))
+                        }
+
+                        // ⬆️ Atas
+                        FilledTonalIconButton(
+                            onClick = { onOffsetChange(offset + Offset(0f, panStep)) },
+                            shape = RoundedCornerShape(8.dp),
+                            colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                containerColor = MaterialTheme.colorScheme.surface,
+                                contentColor = MaterialTheme.colorScheme.onSurface
+                            ),
+                            modifier = Modifier.size(32.dp).testTag("drawing_pan_up")
+                        ) {
+                            Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Geser Atas", modifier = Modifier.size(20.dp))
+                        }
+
+                        // ⬇️ Bawah
+                        FilledTonalIconButton(
+                            onClick = { onOffsetChange(offset - Offset(0f, panStep)) },
+                            shape = RoundedCornerShape(8.dp),
+                            colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                containerColor = MaterialTheme.colorScheme.surface,
+                                contentColor = MaterialTheme.colorScheme.onSurface
+                            ),
+                            modifier = Modifier.size(32.dp).testTag("drawing_pan_down")
+                        ) {
+                            Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Geser Bawah", modifier = Modifier.size(20.dp))
+                        }
+
+                        // ➡️ Kanan
+                        FilledTonalIconButton(
+                            onClick = { onOffsetChange(offset - Offset(panStep, 0f)) },
+                            shape = RoundedCornerShape(8.dp),
+                            colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                containerColor = MaterialTheme.colorScheme.surface,
+                                contentColor = MaterialTheme.colorScheme.onSurface
+                            ),
+                            modifier = Modifier.size(32.dp).testTag("drawing_pan_right")
+                        ) {
+                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "Geser Kanan", modifier = Modifier.size(20.dp))
+                        }
+                    }
+
+                    // Right: Zoom In, Zoom Out, and Fit/Reset Buttons
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        // Zoom Out
+                        FilledTonalIconButton(
+                            onClick = {
+                                val newScale = (scale - 0.25f).coerceAtLeast(1.0f)
+                                onScaleChange(newScale)
+                                if (newScale <= 1.02f) onResetZoom()
+                            },
+                            shape = CircleShape,
+                            colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                containerColor = MaterialTheme.colorScheme.surface,
+                                contentColor = MaterialTheme.colorScheme.onSurface
+                            ),
+                            modifier = Modifier.size(30.dp).testTag("drawing_zoom_out")
+                        ) {
+                            Icon(Icons.Default.Remove, contentDescription = "Perkecil Zoom", modifier = Modifier.size(16.dp))
+                        }
+
+                        // Zoom % Label
+                        Text(
+                            text = "${(scale * 100).toInt()}%",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .clickable { onResetZoom() }
+                                .padding(horizontal = 4.dp)
+                                .testTag("drawing_zoom_label")
+                        )
+
+                        // Zoom In
+                        FilledTonalIconButton(
+                            onClick = {
+                                val newScale = (scale + 0.25f).coerceAtMost(4.5f)
+                                onScaleChange(newScale)
+                            },
+                            shape = CircleShape,
+                            colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                containerColor = MaterialTheme.colorScheme.surface,
+                                contentColor = MaterialTheme.colorScheme.onSurface
+                            ),
+                            modifier = Modifier.size(30.dp).testTag("drawing_zoom_in")
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = "Perbesar Zoom", modifier = Modifier.size(16.dp))
+                        }
+
+                        // Fit to screen / Reset
+                        FilledIconButton(
+                            onClick = onResetZoom,
+                            shape = RoundedCornerShape(8.dp),
+                            colors = IconButtonDefaults.filledIconButtonColors(
+                                containerColor = if (scale > 1.05f || offset != Offset.Zero) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.surface
+                                },
+                                contentColor = if (scale > 1.05f || offset != Offset.Zero) {
+                                    MaterialTheme.colorScheme.onPrimary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                }
+                            ),
+                            modifier = Modifier.size(30.dp).testTag("drawing_zoom_reset")
+                        ) {
+                            Icon(Icons.Default.FitScreen, contentDescription = "Pusatkan Dokumen", modifier = Modifier.size(16.dp))
+                        }
+                    }
+                }
+            }
+
             // Main Tool Selection Row
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -148,7 +311,7 @@ fun DrawingToolbar(
                     modifier = Modifier.size(38.dp).testTag("undo_button")
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Undo,
+                        imageVector = Icons.AutoMirrored.Filled.Undo,
                         contentDescription = "Undo",
                         tint = if (canUndo) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.25f),
                         modifier = Modifier.size(19.dp)
@@ -162,7 +325,7 @@ fun DrawingToolbar(
                     modifier = Modifier.size(38.dp).testTag("redo_button")
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Redo,
+                        imageVector = Icons.AutoMirrored.Filled.Redo,
                         contentDescription = "Redo",
                         tint = if (canRedo) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.25f),
                         modifier = Modifier.size(19.dp)

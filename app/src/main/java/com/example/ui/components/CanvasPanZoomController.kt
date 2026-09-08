@@ -8,8 +8,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -190,7 +189,7 @@ fun CanvasPanZoomController(
                     ) {
                         // KIRI (Left Arrow) - Moves view LEFT by increasing offset.x
                         ArrowButton(
-                            icon = Icons.Default.KeyboardArrowLeft,
+                            icon = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
                             contentDescription = "Geser ke Kiri",
                             onClick = { onOffsetChange(offset + Offset(panStep, 0f)) },
                             testTag = "pan_arrow_left"
@@ -227,7 +226,7 @@ fun CanvasPanZoomController(
 
                         // KANAN (Right Arrow) - Moves view RIGHT by decreasing offset.x
                         ArrowButton(
-                            icon = Icons.Default.KeyboardArrowRight,
+                            icon = Icons.AutoMirrored.Filled.KeyboardArrowRight,
                             contentDescription = "Geser ke Kanan",
                             onClick = { onOffsetChange(offset - Offset(panStep, 0f)) },
                             testTag = "pan_arrow_right"
