@@ -30,7 +30,7 @@ class GreetingScreenshotTest {
         author = "BookLish Academy",
         fileUri = "",
         localFilePath = "",
-        fileType = "EPUB",
+        fileType = "PDF",
         totalPages = 6,
         currentPage = 2,
         progressPercent = 33,

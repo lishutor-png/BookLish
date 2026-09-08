@@ -229,76 +229,41 @@ fun ReaderScreen(
             }
         }
 
-        // Floating Zoom Controls & Quick Reset Pill (Bottom Right)
+        // Floating Zoom Controls & 4-Directional Arrow Pan Controller (Bottom Right)
+        val isControllerVisible = scale > 1.02f || uiState.activeTool != ActiveDrawingTool.NONE || uiState.isControlsVisible
+        val controllerBottomPadding = when {
+            uiState.activeTool != ActiveDrawingTool.NONE -> 142.dp
+            uiState.isControlsVisible -> 108.dp
+            else -> 24.dp
+        }
+
         AnimatedVisibility(
-            visible = scale > 1.05f || uiState.activeTool != ActiveDrawingTool.NONE,
+            visible = isControllerVisible,
             enter = fadeIn() + scaleIn(),
             exit = fadeOut() + scaleOut(),
             modifier = Modifier
                 .align(Alignment.BottomEnd)
-                .padding(end = 16.dp, bottom = if (uiState.activeTool != ActiveDrawingTool.NONE) 130.dp else 90.dp)
+                .padding(end = 14.dp, bottom = controllerBottomPadding)
         ) {
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
-                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                shadowElevation = 4.dp
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
-                ) {
-                    // Zoom Out
-                    IconButton(
-                        onClick = {
-                            scale = (scale - 0.25f).coerceAtLeast(1.0f)
-                            if (scale <= 1.02f) offset = Offset.Zero
-                        },
-                        modifier = Modifier.size(32.dp).testTag("zoom_out_button")
-                    ) {
-                        Icon(Icons.Default.Remove, contentDescription = "Perkecil", tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(16.dp))
-                    }
-
-                    // Percentage & Reset
-                    Text(
-                        text = "${(scale * 100).toInt()}%",
-                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier
-                            .clickable {
-                                scale = 1.0f
-                                offset = Offset.Zero
-                            }
-                            .padding(horizontal = 6.dp)
-                            .testTag("zoom_level_label")
-                    )
-
-                    // Zoom In
-                    IconButton(
-                        onClick = {
-                            scale = (scale + 0.25f).coerceAtMost(4.5f)
-                        },
-                        modifier = Modifier.size(32.dp).testTag("zoom_in_button")
-                    ) {
-                        Icon(Icons.Default.Add, contentDescription = "Perbesar", tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(16.dp))
-                    }
-
-                    if (scale > 1.05f) {
-                        IconButton(
-                            onClick = {
-                                scale = 1.0f
-                                offset = Offset.Zero
-                            },
-                            modifier = Modifier.size(32.dp).testTag("reset_zoom_button")
-                        ) {
-                            Icon(Icons.Default.FitScreen, contentDescription = "Reset Zoom", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
-                        }
-                    }
-                }
-            }
+            CanvasPanZoomController(
+                scale = scale,
+                offset = offset,
+                onScaleChange = { newScale ->
+                    scale = newScale
+                    if (newScale <= 1.02f) offset = Offset.Zero
+                },
+                onOffsetChange = { newOffset ->
+                    offset = newOffset
+                },
+                onReset = {
+                    scale = 1.0f
+                    offset = Offset.Zero
+                },
+                isDrawingActive = uiState.activeTool != ActiveDrawingTool.NONE
+            )
         }
 
-        // Two-Finger Gesture Hint Pill when in Drawing Mode
+        // Gesture & Arrow Controls Hint Pill when in Drawing Mode
         AnimatedVisibility(
             visible = uiState.activeTool == ActiveDrawingTool.PEN || uiState.activeTool == ActiveDrawingTool.HIGHLIGHTER,
             enter = fadeIn() + slideInVertically { -it },
@@ -309,23 +274,23 @@ fun ReaderScreen(
         ) {
             Surface(
                 shape = RoundedCornerShape(50),
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
                 border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)),
-                shadowElevation = 2.dp
+                shadowElevation = 3.dp
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
                 ) {
                     Icon(
-                        Icons.Default.Pinch,
+                        Icons.Default.OpenWith,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(14.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "Gunakan gestur 2 jari untuk zoom & geser",
+                        text = "Gunakan tombol panah di kanan bawah atau 2 jari untuk geser",
                         style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
                         color = MaterialTheme.colorScheme.onSurface
                     )
