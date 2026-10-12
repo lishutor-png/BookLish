@@ -167,6 +167,63 @@ fun CanvasPanZoomController(
 
                 Spacer(modifier = Modifier.height(6.dp))
 
+                // 1b. Quick Zoom Presets (1x, 1.5x, 2x, 3x)
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = 4.dp)
+                ) {
+                    val presets = listOf(1.0f to "1x", 1.5f to "1.5x", 2.0f to "2x", 3.0f to "3x")
+                    for ((presetScale, label) in presets) {
+                        val isSelected = kotlin.math.abs(scale - presetScale) < 0.12f
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier
+                                .clickable {
+                                    if (presetScale <= 1.02f) {
+                                        onReset()
+                                    } else {
+                                        onScaleChange(presetScale)
+                                    }
+                                }
+                                .testTag("zoom_preset_$label")
+                        ) {
+                            Text(
+                                text = label,
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 10.sp
+                                ),
+                                color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+                }
+
+                // 1c. Smooth 1-Finger Zoom Slider
+                Slider(
+                    value = scale.coerceIn(1.0f, 4.5f),
+                    onValueChange = { newScale ->
+                        onScaleChange(newScale)
+                        if (newScale <= 1.02f) onReset()
+                    },
+                    valueRange = 1.0f..4.5f,
+                    colors = SliderDefaults.colors(
+                        thumbColor = MaterialTheme.colorScheme.primary,
+                        activeTrackColor = MaterialTheme.colorScheme.primary,
+                        inactiveTrackColor = MaterialTheme.colorScheme.outlineVariant
+                    ),
+                    modifier = Modifier
+                        .width(156.dp)
+                        .height(28.dp)
+                        .padding(horizontal = 4.dp)
+                        .testTag("zoom_slider_control")
+                )
+
+                Spacer(modifier = Modifier.height(4.dp))
+
                 // 2. 4-Directional Arrow Keys (D-Pad Cross)
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,

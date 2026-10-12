@@ -9,19 +9,40 @@ import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import android.util.Log
-import androidx.compose.ui.graphics.Color
+import android.util.LruCache
 import com.example.data.model.ReadingTheme
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.io.FileOutputStream
 
 class PdfDocumentHelper(private val context: Context) {
 
     private var fileDescriptor: ParcelFileDescriptor? = null
     private var pdfRenderer: PdfRenderer? = null
+    private val renderMutex = Mutex()
+
+    // Cache up to 12 rendered PDF page bitmaps in memory for instant 0ms page sliding
+    private val pageCache = object : LruCache<String, Bitmap>(12) {
+        override fun sizeOf(key: String, value: Bitmap): Int = 1
+    }
+
     var pageCount: Int = 0
         private set
+
+    private fun cacheKey(pageIndex: Int, targetWidth: Int, theme: ReadingTheme): String {
+        return "${pageIndex}_${targetWidth}_${theme.name}"
+    }
+
+    fun getCachedPage(
+        pageIndex: Int,
+        targetWidth: Int = 1400,
+        theme: ReadingTheme = ReadingTheme.LIGHT
+    ): Bitmap? {
+        val cached = pageCache.get(cacheKey(pageIndex, targetWidth, theme))
+        return if (cached != null && !cached.isRecycled) cached else null
+    }
 
     fun open(uri: Uri): Boolean {
         close()
@@ -53,8 +74,24 @@ class PdfDocumentHelper(private val context: Context) {
         }
     }
 
-    suspend fun renderPage(pageIndex: Int, targetWidth: Int = 1080, theme: ReadingTheme = ReadingTheme.NIGHT): Bitmap? =
-        withContext(Dispatchers.IO) {
+    suspend fun renderPage(
+        pageIndex: Int,
+        targetWidth: Int = 1080,
+        theme: ReadingTheme = ReadingTheme.NIGHT
+    ): Bitmap? = withContext(Dispatchers.IO) {
+        if (pageIndex < 0 || pageIndex >= pageCount) return@withContext null
+
+        val key = cacheKey(pageIndex, targetWidth, theme)
+        pageCache.get(key)?.let { cached ->
+            if (!cached.isRecycled) return@withContext cached
+        }
+
+        renderMutex.withLock {
+            // Double-check cache after acquiring mutex
+            pageCache.get(key)?.let { cached ->
+                if (!cached.isRecycled) return@withContext cached
+            }
+
             val renderer = pdfRenderer ?: return@withContext null
             if (pageIndex < 0 || pageIndex >= pageCount) return@withContext null
 
@@ -82,10 +119,9 @@ class PdfDocumentHelper(private val context: Context) {
                 page.close()
 
                 // Apply theme color filter if night, oled or sepia
-                if (theme == ReadingTheme.NIGHT || theme == ReadingTheme.OLED) {
+                val finalBitmap = if (theme == ReadingTheme.NIGHT || theme == ReadingTheme.OLED) {
                     val invertedBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
                     val filterCanvas = android.graphics.Canvas(invertedBitmap)
-                    // Invert colors and dim slightly for eye comfort
                     val colorMatrix = ColorMatrix(
                         floatArrayOf(
                             -0.85f, 0f, 0f, 0f, 230f,
@@ -120,14 +156,34 @@ class PdfDocumentHelper(private val context: Context) {
                 } else {
                     bitmap
                 }
+
+                pageCache.put(key, finalBitmap)
+                finalBitmap
             } catch (e: Exception) {
                 Log.e("PdfDocumentHelper", "Error rendering page $pageIndex", e)
                 null
             }
         }
+    }
+
+    suspend fun prefetchAdjacentPages(
+        centerPageIndex: Int,
+        targetWidth: Int = 1400,
+        theme: ReadingTheme = ReadingTheme.LIGHT
+    ) {
+        val neighbors = listOf(centerPageIndex + 1, centerPageIndex - 1)
+        for (neighbor in neighbors) {
+            if (neighbor in 0 until pageCount) {
+                if (getCachedPage(neighbor, targetWidth, theme) == null) {
+                    renderPage(neighbor, targetWidth, theme)
+                }
+            }
+        }
+    }
 
     fun close() {
         try {
+            pageCache.evictAll()
             pdfRenderer?.close()
             fileDescriptor?.close()
         } catch (e: Exception) {

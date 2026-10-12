@@ -18,6 +18,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.model.ReaderViewMode
 import com.example.data.model.ReadingSettings
 import com.example.data.model.ReadingTheme
 
@@ -52,7 +53,7 @@ fun ReadingSettingsSheet(
                 .navigationBarsPadding()
         ) {
             Text(
-                text = "Tampilan Pembaca PDF",
+                text = "Tampilan & Navigasi PDF",
                 style = MaterialTheme.typography.titleLarge.copy(
                     fontWeight = FontWeight.Bold,
                     letterSpacing = (-0.2).sp
@@ -60,9 +61,76 @@ fun ReadingSettingsSheet(
                 color = MaterialTheme.colorScheme.onSurface
             )
 
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // 1. NAVIGATION / SLIDE MODE SELECTION
+            Text(
+                text = "MODE SLIDE / GULIR HALAMAN",
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontWeight = FontWeight.SemiBold,
+                    letterSpacing = 0.8.sp
+                ),
+                color = MaterialTheme.colorScheme.primary
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                for (mode in ReaderViewMode.values()) {
+                    val isSelected = settings.viewMode == mode
+                    Surface(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(14.dp))
+                            .border(
+                                width = if (isSelected) 2.dp else 1.dp,
+                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                                shape = RoundedCornerShape(14.dp)
+                            )
+                            .clickable {
+                                onUpdateSettings { it.copy(viewMode = mode) }
+                            }
+                            .testTag("view_mode_${mode.name.lowercase()}"),
+                        color = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 14.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (mode == ReaderViewMode.SINGLE_PAGE_SWIPE) Icons.Default.SwapHoriz else Icons.Default.SwapVert,
+                                contentDescription = mode.displayName,
+                                tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column {
+                                Text(
+                                    text = if (mode == ReaderViewMode.SINGLE_PAGE_SWIPE) "Geser Kiri/Kanan" else "Gulir Vertikal",
+                                    style = MaterialTheme.typography.bodySmall.copy(
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold
+                                    ),
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = if (mode == ReaderViewMode.SINGLE_PAGE_SWIPE) "Per halaman + Coretan" else "Scroll atas-bawah mulus",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
             Spacer(modifier = Modifier.height(18.dp))
 
-            // THEME SELECTION
+            // 2. THEME SELECTION
             Text(
                 text = "TEMA WARNA KANVAS",
                 style = MaterialTheme.typography.labelSmall.copy(
@@ -111,6 +179,37 @@ fun ReadingSettingsSheet(
                             )
                         }
                     }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(18.dp))
+
+            // 3. QUICK GESTURE TIPS CARD
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = "Pintasan Navigasi Cepat:",
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = "• Ketuk 2x (Double-Tap) pada dokumen untuk Zoom cepat (1x → 2x → 3x).",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "• Usap 1 jari ke kiri/kanan untuk pindah halaman, atau geser bebas saat di-zoom.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
 

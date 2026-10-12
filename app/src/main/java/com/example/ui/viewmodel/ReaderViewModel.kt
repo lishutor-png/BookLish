@@ -16,6 +16,7 @@ import com.squareup.moshi.Moshi
 import com.squareup.moshi.Types
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -86,6 +87,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     // Undo / Redo history for active page drawing
     private val undoStack = mutableListOf<List<DrawingStroke>>()
     private val redoStack = mutableListOf<List<DrawingStroke>>()
+    private var pageRenderJob: Job? = null
 
     private val moshi = Moshi.Builder().addLast(KotlinJsonAdapterFactory()).build()
     private val pointListType = Types.newParameterizedType(List::class.java, DrawingPoint::class.java)
@@ -172,20 +174,77 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
         val book = _uiState.value.currentBook ?: return
         val progress = ((targetPage + 1).toFloat() / total * 100).toInt()
+        val theme = _uiState.value.settings.theme
 
-        viewModelScope.launch {
-            // Save progress to database
+        // Instant synchronous check from memory cache to prevent any flicker or loading spinner
+        val cachedBitmap = pdfHelper.getCachedPage(targetPage, 1400, theme)
+
+        _uiState.update {
+            it.copy(
+                currentPageIndex = targetPage,
+                currentChapterTitle = "Halaman ${targetPage + 1} dari $total",
+                activePagePdfBitmap = cachedBitmap ?: it.activePagePdfBitmap,
+                isRenderingPdfPage = cachedBitmap == null && it.activePagePdfBitmap == null
+            )
+        }
+
+        loadAnnotationsForCurrentPage(book.id, targetPage)
+
+        pageRenderJob?.cancel()
+        pageRenderJob = viewModelScope.launch {
             repository.updateProgress(book.id, targetPage, progress)
-
-            _uiState.update {
-                it.copy(
-                    currentPageIndex = targetPage,
-                    currentChapterTitle = "Halaman ${targetPage + 1} dari $total"
-                )
+            if (cachedBitmap == null) {
+                renderCurrentPdfPage(targetPage)
+            } else {
+                pdfHelper.prefetchAdjacentPages(targetPage, 1400, theme)
             }
+        }
+    }
 
-            renderCurrentPdfPage(targetPage)
-            loadAnnotationsForCurrentPage(book.id, targetPage)
+    fun syncVisiblePageInContinuousMode(pageIndex: Int) {
+        val total = _uiState.value.totalPages
+        val targetPage = pageIndex.coerceIn(0, (total - 1).coerceAtLeast(0))
+        if (targetPage == _uiState.value.currentPageIndex) return
+
+        val book = _uiState.value.currentBook ?: return
+        val progress = ((targetPage + 1).toFloat() / total * 100).toInt()
+        val theme = _uiState.value.settings.theme
+        val cachedBitmap = pdfHelper.getCachedPage(targetPage, 1400, theme)
+
+        _uiState.update {
+            it.copy(
+                currentPageIndex = targetPage,
+                currentChapterTitle = "Halaman ${targetPage + 1} dari $total",
+                activePagePdfBitmap = cachedBitmap ?: it.activePagePdfBitmap
+            )
+        }
+
+        loadAnnotationsForCurrentPage(book.id, targetPage)
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.updateProgress(book.id, targetPage, progress)
+        }
+    }
+
+    fun getCachedPageForIndex(pageIndex: Int): Bitmap? {
+        return pdfHelper.getCachedPage(pageIndex, 1400, _uiState.value.settings.theme)
+    }
+
+    suspend fun renderPageForIndex(pageIndex: Int): Bitmap? {
+        return pdfHelper.renderPage(
+            pageIndex = pageIndex,
+            targetWidth = 1400,
+            theme = _uiState.value.settings.theme
+        )
+    }
+
+    fun toggleViewMode() {
+        updateSettings { current ->
+            val nextMode = if (current.viewMode == ReaderViewMode.SINGLE_PAGE_SWIPE) {
+                ReaderViewMode.CONTINUOUS_VERTICAL
+            } else {
+                ReaderViewMode.SINGLE_PAGE_SWIPE
+            }
+            current.copy(viewMode = nextMode)
         }
     }
 
@@ -202,18 +261,34 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private suspend fun renderCurrentPdfPage(pageIndex: Int) {
-        _uiState.update { it.copy(isRenderingPdfPage = true) }
+        val theme = _uiState.value.settings.theme
+        val cached = pdfHelper.getCachedPage(pageIndex, 1400, theme)
+        if (cached != null) {
+            _uiState.update {
+                it.copy(
+                    activePagePdfBitmap = cached,
+                    isRenderingPdfPage = false
+                )
+            }
+            pdfHelper.prefetchAdjacentPages(pageIndex, 1400, theme)
+            return
+        }
+
+        if (_uiState.value.activePagePdfBitmap == null) {
+            _uiState.update { it.copy(isRenderingPdfPage = true) }
+        }
         val bitmap = pdfHelper.renderPage(
             pageIndex = pageIndex,
             targetWidth = 1400,
-            theme = _uiState.value.settings.theme
+            theme = theme
         )
         _uiState.update {
             it.copy(
-                activePagePdfBitmap = bitmap,
+                activePagePdfBitmap = bitmap ?: it.activePagePdfBitmap,
                 isRenderingPdfPage = false
             )
         }
+        pdfHelper.prefetchAdjacentPages(pageIndex, 1400, theme)
     }
 
     // ----------------------------------------------------
@@ -602,11 +677,15 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     // ----------------------------------------------------
 
     fun updateSettings(transform: (ReadingSettings) -> ReadingSettings) {
+        val oldTheme = _uiState.value.settings.theme
         val newSettings = transform(_uiState.value.settings)
         _uiState.update { it.copy(settings = newSettings) }
 
-        viewModelScope.launch {
-            renderCurrentPdfPage(_uiState.value.currentPageIndex)
+        if (newSettings.theme != oldTheme) {
+            pageRenderJob?.cancel()
+            pageRenderJob = viewModelScope.launch {
+                renderCurrentPdfPage(_uiState.value.currentPageIndex)
+            }
         }
     }
 

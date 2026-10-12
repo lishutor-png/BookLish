@@ -247,4 +247,36 @@ class ExampleUnitTest {
         assertEquals("Rumus penting bab 2", bookmark.note)
         assertEquals("Halaman 3", bookmark.chapterTitle)
     }
+
+    @Test
+    fun clampPanOffset_keepsZoomedPageWithinViewportBounds() {
+        val containerSize = androidx.compose.ui.unit.IntSize(1000, 1600)
+
+        // At 1x zoom, offset is always clamped to zero
+        val offsetAt1x = com.example.ui.screens.clampPanOffset(
+            rawOffset = Offset(200f, -150f),
+            currentScale = 1.0f,
+            containerSize = containerSize
+        )
+        assertEquals(0f, offsetAt1x.x, 0.001f)
+        assertEquals(0f, offsetAt1x.y, 0.001f)
+
+        // At 2x zoom, max X offset is 1000 * (2 - 1) / 2 = 500, max Y offset is 1600 * (2 - 1) / 2 = 800
+        val offsetAt2x = com.example.ui.screens.clampPanOffset(
+            rawOffset = Offset(900f, -1200f),
+            currentScale = 2.0f,
+            containerSize = containerSize
+        )
+        assertEquals(500f, offsetAt2x.x, 0.001f)
+        assertEquals(-800f, offsetAt2x.y, 0.001f)
+    }
+
+    @Test
+    fun readerViewMode_defaultsToSinglePageSwipe_andTogglesToContinuousVertical() {
+        var settings = ReadingSettings()
+        assertEquals(ReaderViewMode.SINGLE_PAGE_SWIPE, settings.viewMode)
+
+        settings = settings.copy(viewMode = ReaderViewMode.CONTINUOUS_VERTICAL)
+        assertEquals(ReaderViewMode.CONTINUOUS_VERTICAL, settings.viewMode)
+    }
 }

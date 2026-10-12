@@ -57,6 +57,11 @@ enum class ReaderTextAlign(val displayName: String) {
     CENTER("Rata Tengah")
 }
 
+enum class ReaderViewMode(val displayName: String) {
+    SINGLE_PAGE_SWIPE("Geser Halaman (↔)"),
+    CONTINUOUS_VERTICAL("Gulir Vertikal (↕)")
+}
+
 data class ReadingSettings(
     val fontSizeSp: Float = 16f,
     val lineHeightMultiplier: Float = 1.6f,
@@ -65,7 +70,8 @@ data class ReadingSettings(
     val textAlign: ReaderTextAlign = ReaderTextAlign.LEFT,
     val horizontalPaddingDp: Int = 16,
     val isAutoScrollEnabled: Boolean = false,
-    val autoScrollSpeed: Float = 1f
+    val autoScrollSpeed: Float = 1f,
+    val viewMode: ReaderViewMode = ReaderViewMode.SINGLE_PAGE_SWIPE
 )
 
 enum class ActiveDrawingTool {
