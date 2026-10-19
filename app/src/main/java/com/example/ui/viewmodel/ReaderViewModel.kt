@@ -12,6 +12,7 @@ import com.example.data.local.AppDatabase
 import com.example.data.local.BookRepository
 import com.example.data.model.*
 import com.example.data.parser.PdfDocumentHelper
+import com.example.data.parser.PdfTextExtractor
 import com.example.data.parser.SamplePdfProvider
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.Types
@@ -89,6 +90,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     private val undoStack = mutableListOf<List<DrawingStroke>>()
     private val redoStack = mutableListOf<List<DrawingStroke>>()
     private var pageRenderJob: Job? = null
+    private var extractedDocumentPages: List<String> = emptyList()
 
     private val moshi = Moshi.Builder().addLast(KotlinJsonAdapterFactory()).build()
     private val pointListType = Types.newParameterizedType(List::class.java, DrawingPoint::class.java)
@@ -164,6 +166,15 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
         renderCurrentPdfPage(initialPage)
         loadAnnotationsForCurrentPage(book.id, initialPage)
+
+        // Asynchronously extract and cache all text across document pages for instantaneous full-document search
+        viewModelScope.launch(Dispatchers.IO) {
+            extractedDocumentPages = PdfTextExtractor.extractPagesText(
+                context = getApplication(),
+                book = book,
+                totalPages = totalPages
+            )
+        }
     }
 
     fun goToPage(pageIndex: Int) {
@@ -648,10 +659,11 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setSearchQuery(query: String) {
         _uiState.update { it.copy(searchQuery = query) }
-        if (query.length >= 2) {
-            performSearch(query)
+        val trimmed = query.trim()
+        if (trimmed.length >= 2) {
+            performSearch(trimmed)
         } else {
-            _uiState.update { it.copy(searchResults = emptyList(), currentSearchResultIndex = -1) }
+            _uiState.update { it.copy(searchResults = emptyList(), currentSearchResultIndex = -1, isSearching = false) }
         }
     }
 
@@ -659,43 +671,78 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch(Dispatchers.IO) {
             _uiState.update { it.copy(isSearching = true) }
             val results = mutableListOf<SearchResult>()
+            val currentBook = _uiState.value.currentBook
+            val totalPages = _uiState.value.totalPages
 
-            val sampleQueries = listOf(
-                "bolpoin" to "Area Coretan & Latihan Catatan (Gunakan Tool Bolpoin/Stabilo)",
-                "stabilo" to "Gunakan Stabilo kuning untuk menandai argumen utama peneliti.",
-                "gestur" to "Gestur 2 Jari Pintar (Pinch & Pan): Saat mode menulis aktif",
-                "zoom" to "Perbesar dokumen hingga 300% untuk menulis catatan kecil di margin",
-                "catatan" to "Menyusun catatan kritis dan ringkasan",
-                "penanda" to "Simpan penanda halaman penting disertai catatan refleksi"
-            )
+            // Ensure document text pages are extracted
+            if (extractedDocumentPages.isEmpty() && currentBook != null) {
+                extractedDocumentPages = PdfTextExtractor.extractPagesText(
+                    context = getApplication(),
+                    book = currentBook,
+                    totalPages = totalPages
+                )
+            }
 
-            for ((qWord, snippetSample) in sampleQueries) {
-                if (qWord.contains(query, ignoreCase = true) || query.contains(qWord, ignoreCase = true)) {
-                    val pageIdx = results.size % _uiState.value.totalPages.coerceAtLeast(1)
+            val queryLower = query.lowercase().trim()
+            var matchCount = 0
+
+            // Scan through ALL pages of the entire document
+            for (pageIdx in 0 until totalPages) {
+                val pageText = if (pageIdx < extractedDocumentPages.size) {
+                    extractedDocumentPages[pageIdx]
+                } else {
+                    ""
+                }
+
+                if (pageText.isNotBlank()) {
+                    var startIndex = 0
+                    val pageTextLower = pageText.lowercase()
+
+                    while (startIndex < pageText.length) {
+                        val foundIndex = pageTextLower.indexOf(queryLower, startIndex)
+                        if (foundIndex == -1) break
+
+                        // Extract surrounding contextual snippet
+                        val snippetStart = (foundIndex - 35).coerceAtLeast(0)
+                        val snippetEnd = (foundIndex + query.length + 50).coerceAtMost(pageText.length)
+                        val rawSnippet = pageText.substring(snippetStart, snippetEnd).trim()
+                        val prefix = if (snippetStart > 0) "… " else ""
+                        val suffix = if (snippetEnd < pageText.length) " …" else ""
+                        val formattedSnippet = "$prefix$rawSnippet$suffix"
+
+                        matchCount++
+                        results.add(
+                            SearchResult(
+                                id = "pdf_match_${pageIdx}_${foundIndex}_$matchCount",
+                                pageOrChapterIndex = pageIdx,
+                                pageOrChapterTitle = "Halaman ${pageIdx + 1}",
+                                snippet = formattedSnippet,
+                                matchWord = query,
+                                characterOffset = foundIndex
+                            )
+                        )
+
+                        // Advance search past current match
+                        startIndex = foundIndex + maxOf(1, query.length)
+                    }
+                }
+            }
+
+            // Fallback for title/author match if content has no extractable text
+            if (results.isEmpty() && currentBook != null) {
+                val bookTitle = currentBook.title
+                if (bookTitle.contains(query, ignoreCase = true)) {
                     results.add(
                         SearchResult(
-                            id = "pdf_match_${results.size}",
-                            pageOrChapterIndex = pageIdx,
-                            pageOrChapterTitle = "Halaman ${pageIdx + 1}",
-                            snippet = "…$snippetSample…",
+                            id = "pdf_title_match",
+                            pageOrChapterIndex = 0,
+                            pageOrChapterTitle = "Halaman 1 (Judul Dokumen)",
+                            snippet = "Kecocokan pada judul dokumen: \"$bookTitle\"",
                             matchWord = query,
                             characterOffset = 0
                         )
                     )
                 }
-            }
-
-            if (results.isEmpty() && query.isNotBlank()) {
-                results.add(
-                    SearchResult(
-                        id = "pdf_generic_1",
-                        pageOrChapterIndex = _uiState.value.currentPageIndex,
-                        pageOrChapterTitle = "Halaman ${_uiState.value.currentPageIndex + 1}",
-                        snippet = "Pencarian '$query' pada dokumen PDF aktif.",
-                        matchWord = query,
-                        characterOffset = 0
-                    )
-                )
             }
 
             withContext(Dispatchers.Main) {
@@ -715,8 +762,39 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         val idx = _uiState.value.searchResults.indexOf(result)
         _uiState.update {
             it.copy(
-                currentSearchResultIndex = idx,
+                currentSearchResultIndex = if (idx >= 0) idx else 0,
                 isSearchSheetOpen = false
+            )
+        }
+    }
+
+    fun nextSearchResult() {
+        val results = _uiState.value.searchResults
+        if (results.isEmpty()) return
+        val currentIdx = _uiState.value.currentSearchResultIndex
+        val nextIdx = (currentIdx + 1) % results.size
+        val result = results[nextIdx]
+        goToPage(result.pageOrChapterIndex)
+        _uiState.update { it.copy(currentSearchResultIndex = nextIdx) }
+    }
+
+    fun previousSearchResult() {
+        val results = _uiState.value.searchResults
+        if (results.isEmpty()) return
+        val currentIdx = _uiState.value.currentSearchResultIndex
+        val prevIdx = if (currentIdx <= 0) results.size - 1 else currentIdx - 1
+        val result = results[prevIdx]
+        goToPage(result.pageOrChapterIndex)
+        _uiState.update { it.copy(currentSearchResultIndex = prevIdx) }
+    }
+
+    fun clearSearch() {
+        _uiState.update {
+            it.copy(
+                searchQuery = "",
+                searchResults = emptyList(),
+                currentSearchResultIndex = -1,
+                isSearching = false
             )
         }
     }

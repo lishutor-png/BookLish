@@ -272,11 +272,11 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun readerViewMode_defaultsToSinglePageSwipe_andTogglesToContinuousVertical() {
+    fun readerViewMode_defaultsToContinuousVertical_andTogglesToSinglePageSwipe() {
         var settings = ReadingSettings()
-        assertEquals(ReaderViewMode.SINGLE_PAGE_SWIPE, settings.viewMode)
-
-        settings = settings.copy(viewMode = ReaderViewMode.CONTINUOUS_VERTICAL)
         assertEquals(ReaderViewMode.CONTINUOUS_VERTICAL, settings.viewMode)
+
+        settings = settings.copy(viewMode = ReaderViewMode.SINGLE_PAGE_SWIPE)
+        assertEquals(ReaderViewMode.SINGLE_PAGE_SWIPE, settings.viewMode)
     }
 }

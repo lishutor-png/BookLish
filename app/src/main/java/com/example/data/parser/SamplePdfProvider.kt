@@ -385,4 +385,23 @@ object SamplePdfProvider {
         }
         pdfDoc.close()
     }
+
+    fun getSampleBookPagesText(book: BookEntity): List<String>? {
+        val path = book.localFilePath.lowercase()
+        val title = book.title.lowercase()
+        return when {
+            path.contains("panduan_lengkap") || title.contains("panduan") -> listOf(
+                "SELAMAT DATANG DI LISHPDF FITUR UTAMA APLIKASI PEMBACA PDF: • Bolpoin Gambar & Coretan: Tulis catatan tangan langsung di atas dokumen dengan warna & ketebalan presisi. • Stabilo Highlight Teks: Berikan penanda transparan yang indah pada kalimat kunci. • Gestur 2 Jari Pintar (Pinch & Pan): Saat mode menulis aktif, gunakan 2 jari untuk zoom in / zoom out dan menggeser kanvas tanpa menggores coretan yang tidak sengaja. • Penghapus Coretan: Sentuh garis coretan yang ingin dihapus atau bersihkan seluruh halaman. • Bookmark Cepat: Simpan penanda halaman penting disertai catatan ringkas. • Tema Putih Bersih: Tampilan jernih, kontras tinggi, dan nyaman untuk membaca dokumen tebal. Area Latihan Coretan Langsung (Bolpoin / Stabilo)",
+                "PANDUAN GESTUR 2 JARI & MENULIS Cara Menggunakan Gestur Zoom & Geser Kanvas: 1. Menulis / Menggambar (1 Jari): Sentuh dan tarik 1 jari pada layar dengan alat Bolpoin atau Stabilo aktif. 2. Zoom & Geser (2 Jari): Tempelkan 2 jari di layar, lalu cubit (pinch) untuk zoom dan geser kanvas bebas. 3. Presisi Maksimal: Perbesar dokumen hingga 300% untuk menulis catatan kecil di margin dokumen. 4. Reset Zoom Cepat: Ketuk tombol zoom 100% di toolbar untuk kembali ke ukuran pas layar. 5. Undo & Redo: Kembalikan atau ulangi goresan coretan kapan saja dengan tombol panah melingkar.",
+                "METODE MEMBACA AKTIF PADA PDF Tips Memaksimalkan Pemahaman Dokumen: • Tandai premis utama dengan Stabilo kuning atau hijau. • Tuliskan pertanyaan reflektif atau istilah baru pada margin kanan. • Berikan penanda Bookmark pada bab atau rumus penting untuk akses instan dari daftar isi. • Gunakan fitur Cari Kata untuk melompat langsung ke istilah teknis di seluruh halaman dokumen. • Seluruh goresan coretan otomatis tersimpan offline di database perangkat Anda.",
+                "LEMBAR LATIHAN CORETAN & CATATAN Ruang Uji Coba Fitur Bolpoin & Stabilo: Silakan coba aktifkan mode Bolpoin atau Stabilo di toolbar bawah. Cobalah menulis tanda tangan, melingkari teks di bawah, atau membuat sketsa: [  ] Coba coret dengan bolpoin merah / biru. [  ] Coba stabilo kuning pada baris ini. [  ] Coba zoom kanvas dengan 2 jari untuk menulis lebih detail. [  ] Simpan bookmark halaman ini."
+            )
+            path.contains("modul_studi") || title.contains("modul") || title.contains("sketsa") -> listOf(
+                "MODUL KAJIAN RISET & ANALISIS DATA Struktur Sistematika Analisis: 1. Latar Belakang & Identifikasi Masalah: Rumusan signifikansi topik. 2. Kajian Pustaka & Kerangka Teoretis: Penelusuran literatur komparatif. 3. Metode & Desain Pengujian: Teknik pengumpulan data kuantitatif & kualitatif. 4. Analisis Hasil & Pembahasan: Interpretasi statistik serta temuan utama. 5. Kesimpulan & Rekomendasi Aksi: Implikasi strategis ke depan.",
+                "FORMULA & VISUALISASI DIAGRAM Langkah Membedah Diagram & Grafik Penelitian: • Identifikasi sumbu X (variabel independen) dan sumbu Y (variabel dependen). • Teliti satuan ukur, margin kesalahan, dan tingkat kepercayaan (confidence level). • Analisis pola tren: Eksponensial, linier, atau saturasi musiman. • Lingkari titik anomali menggunakan alat Bolpoin untuk dibahas dalam tim. • Gunakan Stabilo pada bagian kesimpulan hipotesis.",
+                "RINGKASAN AKHIR & RENCANA AKSI Daftar Checklist Tindak Lanjut: [  ] Review seluruh anotasi coretan bolpoin dan stabilo pada dokumen. [  ] Simpan bookmark pada lembar data utama untuk presentasi. [  ] Ekspor dan bagikan catatan kepada rekan riset. [  ] Terapkan rekomendasi hasil studi dalam rencana kerja tahun berjalan."
+            )
+            else -> null
+        }
+    }
 }

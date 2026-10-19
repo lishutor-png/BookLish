@@ -71,7 +71,7 @@ data class ReadingSettings(
     val horizontalPaddingDp: Int = 16,
     val isAutoScrollEnabled: Boolean = false,
     val autoScrollSpeed: Float = 1f,
-    val viewMode: ReaderViewMode = ReaderViewMode.SINGLE_PAGE_SWIPE
+    val viewMode: ReaderViewMode = ReaderViewMode.CONTINUOUS_VERTICAL
 )
 
 enum class ActiveDrawingTool {

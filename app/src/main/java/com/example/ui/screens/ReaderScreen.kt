@@ -40,6 +40,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -670,7 +671,7 @@ fun ReaderScreen(
 
         // Top Navigation Bar - Clean White & Crimson Theme
         AnimatedVisibility(
-            visible = uiState.isControlsVisible || uiState.activeTool != ActiveDrawingTool.NONE,
+            visible = uiState.isControlsVisible || uiState.activeTool != ActiveDrawingTool.NONE || uiState.searchResults.isNotEmpty(),
             enter = fadeIn() + slideInVertically { -it },
             exit = fadeOut() + slideOutVertically { -it },
             modifier = Modifier.align(Alignment.TopCenter)
@@ -827,6 +828,132 @@ fun ReaderScreen(
                                     tint = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.size(20.dp)
                                 )
+                            }
+                        }
+                    }
+
+                    // In-Reader Search Navigation Bar HUD (Multi-page jump & result browsing)
+                    AnimatedVisibility(
+                        visible = uiState.searchResults.isNotEmpty(),
+                        enter = fadeIn() + expandVertically(),
+                        exit = fadeOut() + shrinkVertically()
+                    ) {
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 10.dp, end = 10.dp, bottom = 8.dp, top = 2.dp)
+                                .testTag("in_reader_search_hud"),
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f))
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 10.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                // Left: Search keyword & matches counter
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clickable { viewModel.setSearchSheetOpen(true) }
+                                ) {
+                                    Icon(
+                                        Icons.Default.Search,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "\"${uiState.searchQuery}\"",
+                                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier.weight(1f, fill = false)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    val currentMatchNumber = uiState.currentSearchResultIndex + 1
+                                    val currentMatchPage = if (uiState.currentSearchResultIndex in uiState.searchResults.indices) {
+                                        uiState.searchResults[uiState.currentSearchResultIndex].pageOrChapterIndex + 1
+                                    } else {
+                                        uiState.currentPageIndex + 1
+                                    }
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = MaterialTheme.colorScheme.primaryContainer,
+                                        contentColor = MaterialTheme.colorScheme.primary
+                                    ) {
+                                        Text(
+                                            text = "$currentMatchNumber/${uiState.searchResults.size} • Hal. $currentMatchPage",
+                                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+
+                                // Right: Prev, Next, List, Close buttons
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    IconButton(
+                                        onClick = { viewModel.previousSearchResult() },
+                                        modifier = Modifier
+                                            .size(34.dp)
+                                            .testTag("search_prev_button")
+                                    ) {
+                                        Icon(
+                                            Icons.Default.KeyboardArrowUp,
+                                            contentDescription = "Hasil Sebelumnya",
+                                            tint = MaterialTheme.colorScheme.onSurface,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+
+                                    IconButton(
+                                        onClick = { viewModel.nextSearchResult() },
+                                        modifier = Modifier
+                                            .size(34.dp)
+                                            .testTag("search_next_button")
+                                    ) {
+                                        Icon(
+                                            Icons.Default.KeyboardArrowDown,
+                                            contentDescription = "Hasil Berikutnya",
+                                            tint = MaterialTheme.colorScheme.onSurface,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+
+                                    IconButton(
+                                        onClick = { viewModel.setSearchSheetOpen(true) },
+                                        modifier = Modifier
+                                            .size(34.dp)
+                                            .testTag("search_list_button")
+                                    ) {
+                                        Icon(
+                                            Icons.Default.FormatListBulleted,
+                                            contentDescription = "Daftar Hasil",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+
+                                    IconButton(
+                                        onClick = { viewModel.clearSearch() },
+                                        modifier = Modifier
+                                            .size(34.dp)
+                                            .testTag("search_close_button")
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Close,
+                                            contentDescription = "Tutup Pencarian",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
