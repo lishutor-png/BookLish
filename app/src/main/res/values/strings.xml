@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">LishPDF</string>
+    <string name="open_with_pdf_reader">Buka dengan LishPDF</string>
 </resources>

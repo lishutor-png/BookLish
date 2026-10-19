@@ -255,9 +255,9 @@ fun HomeScreen(
 
                             // Quick Feature indicators
                             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                MinimalBadge(icon = Icons.Default.FolderOpen, label = "File Manager")
                                 MinimalBadge(icon = Icons.Default.Edit, label = "Bolpoin")
                                 MinimalBadge(icon = Icons.Default.Brush, label = "Stabilo")
-                                MinimalBadge(icon = Icons.Default.Save, label = "Auto-Save")
                             }
                         }
                     }

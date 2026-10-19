@@ -1,6 +1,7 @@
 package com.example.ui.viewmodel
 
 import android.app.Application
+import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
 import android.util.Log
@@ -292,34 +293,82 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // ----------------------------------------------------
-    // IMPORT EXTERNAL PDF FILES
+    // IMPORT EXTERNAL PDF FILES & FILE MANAGER INTEGRATION
     // ----------------------------------------------------
+
+    fun openFromExternalUri(uri: Uri) {
+        importBookFromUri(uri)
+    }
 
     fun importBookFromUri(uri: Uri) {
         viewModelScope.launch(Dispatchers.IO) {
             _uiState.update { it.copy(isBookLoading = true, errorMessage = null) }
             try {
                 val context = getApplication<Application>()
-                var fileName = "Dokumen_PDF_${System.currentTimeMillis()}"
 
-                context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-                    val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-                    if (nameIndex != -1 && cursor.moveToFirst()) {
-                        fileName = cursor.getString(nameIndex)
+                // Take persistable permission if available
+                if (uri.scheme == "content") {
+                    try {
+                        context.contentResolver.takePersistableUriPermission(
+                            uri,
+                            Intent.FLAG_GRANT_READ_URI_PERMISSION
+                        )
+                    } catch (_: Exception) {}
+                }
+
+                var queriedName: String? = null
+                if (uri.scheme == "content") {
+                    try {
+                        context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                            val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                            if (nameIndex != -1 && cursor.moveToFirst()) {
+                                queriedName = cursor.getString(nameIndex)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.w("ReaderViewModel", "Could not query display name from content resolver", e)
                     }
+                }
+
+                val fallbackName = uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
+                    ?: "Dokumen_${System.currentTimeMillis()}.pdf"
+                val rawName = if (!queriedName.isNullOrBlank()) queriedName!! else fallbackName
+                val fileName = if (rawName.endsWith(".pdf", ignoreCase = true)) rawName else "$rawName.pdf"
+                val title = fileName.substringBeforeLast(".")
+
+                // Check if book already exists in library to avoid duplicate copies and preserve user drawings/bookmarks
+                val existingBook = allBooks.value.firstOrNull { book ->
+                    (book.fileUri == uri.toString() || book.title.equals(title, ignoreCase = true)) &&
+                    book.localFilePath.isNotBlank() && File(book.localFilePath).exists()
+                }
+
+                if (existingBook != null) {
+                    withContext(Dispatchers.Main) {
+                        openBook(existingBook)
+                    }
+                    return@launch
                 }
 
                 // Copy to app internal storage for 100% offline access
                 val cleanBaseName = fileName.replace(Regex("[^a-zA-Z0-9_.-]"), "_")
-                val targetFile = File(File(context.filesDir, "books").apply { if (!exists()) mkdirs() }, "${System.currentTimeMillis()}_$cleanBaseName")
+                val booksDir = File(context.filesDir, "books").apply { if (!exists()) mkdirs() }
+                val targetFile = File(booksDir, "${System.currentTimeMillis()}_$cleanBaseName")
 
-                context.contentResolver.openInputStream(uri)?.use { input ->
+                val inputStream = when (uri.scheme) {
+                    "file" -> {
+                        val path = uri.path
+                        if (path != null && File(path).exists()) File(path).inputStream()
+                        else context.contentResolver.openInputStream(uri)
+                    }
+                    else -> context.contentResolver.openInputStream(uri)
+                } ?: throw IllegalStateException("Tidak dapat membaca data berkas dari $uri")
+
+                inputStream.use { input ->
                     FileOutputStream(targetFile).use { output ->
                         input.copyTo(output)
                     }
                 }
 
-                val title = fileName.substringBeforeLast(".")
                 val author = "Dokumen Saya"
                 var totalPages = 1
 
@@ -361,7 +410,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 _uiState.update {
                     it.copy(
                         isBookLoading = false,
-                        errorMessage = "Gagal mengimpor file PDF: ${e.localizedMessage ?: "Error tidak diketahui"}"
+                        errorMessage = "Gagal memuat dokumen PDF: ${e.localizedMessage ?: "File rusak atau tidak dapat diakses"}"
                     )
                 }
             }
