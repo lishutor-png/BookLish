@@ -31,7 +31,8 @@ data class SearchResult(
     val pageOrChapterTitle: String,
     val snippet: String,
     val matchWord: String,
-    val characterOffset: Int
+    val characterOffset: Int,
+    val normalizedTopFraction: Float = 0.5f
 )
 
 data class ReaderUiState(
@@ -67,6 +68,7 @@ data class ReaderUiState(
     val isSearching: Boolean = false,
     val searchResults: List<SearchResult> = emptyList(),
     val currentSearchResultIndex: Int = -1,
+    val searchHighlightBoxes: Map<Int, List<com.example.data.parser.SearchHighlightBox>> = emptyMap(),
 
     // Sheets & Dialogs
     val isSettingsSheetOpen: Boolean = false,
@@ -160,7 +162,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 isBookLoading = false,
                 currentPageIndex = initialPage,
                 totalPages = totalPages,
-                currentChapterTitle = "Halaman ${initialPage + 1} dari $totalPages"
+                currentChapterTitle = "Halaman ${initialPage + 1} dari $totalPages",
+                settings = it.settings.copy(viewMode = ReaderViewMode.CONTINUOUS_VERTICAL)
             )
         }
 
@@ -169,6 +172,16 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
         // Asynchronously extract and cache all text across document pages for instantaneous full-document search
         viewModelScope.launch(Dispatchers.IO) {
+            val samplePages = SamplePdfProvider.getSampleBookPagesText(book)
+            if (!samplePages.isNullOrEmpty()) {
+                extractedDocumentPages = samplePages
+                return@launch
+            }
+            val nativePages = pdfHelper.extractAllPagesText()
+            if (!nativePages.isNullOrEmpty()) {
+                extractedDocumentPages = nativePages
+                return@launch
+            }
             extractedDocumentPages = PdfTextExtractor.extractPagesText(
                 context = getApplication(),
                 book = book,
@@ -660,10 +673,17 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     fun setSearchQuery(query: String) {
         _uiState.update { it.copy(searchQuery = query) }
         val trimmed = query.trim()
-        if (trimmed.length >= 2) {
+        if (trimmed.isNotEmpty()) {
             performSearch(trimmed)
         } else {
-            _uiState.update { it.copy(searchResults = emptyList(), currentSearchResultIndex = -1, isSearching = false) }
+            _uiState.update {
+                it.copy(
+                    searchResults = emptyList(),
+                    currentSearchResultIndex = -1,
+                    isSearching = false,
+                    searchHighlightBoxes = emptyMap()
+                )
+            }
         }
     }
 
@@ -676,18 +696,43 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
             // Ensure document text pages are extracted
             if (extractedDocumentPages.isEmpty() && currentBook != null) {
-                extractedDocumentPages = PdfTextExtractor.extractPagesText(
-                    context = getApplication(),
-                    book = currentBook,
-                    totalPages = totalPages
-                )
+                val samplePages = SamplePdfProvider.getSampleBookPagesText(currentBook)
+                if (!samplePages.isNullOrEmpty()) {
+                    extractedDocumentPages = samplePages
+                } else {
+                    val nativePages = pdfHelper.extractAllPagesText()
+                    extractedDocumentPages = if (!nativePages.isNullOrEmpty()) {
+                        nativePages
+                    } else {
+                        PdfTextExtractor.extractPagesText(
+                            context = getApplication(),
+                            book = currentBook,
+                            totalPages = totalPages
+                        )
+                    }
+                }
             }
 
-            val queryLower = query.lowercase().trim()
             var matchCount = 0
+            val maxMatches = 250
+
+            // Build spaced letters regex for flexible font kerning matching (e.g. p a n d u a n matches panduan)
+            val spacedRegex = if (query.length in 2..30) {
+                try {
+                    val pattern = query.toCharArray().joinToString("""\s*""") { Regex.escape(it.toString()) }
+                    Regex(pattern, RegexOption.IGNORE_CASE)
+                } catch (e: Exception) {
+                    null
+                }
+            } else {
+                null
+            }
 
             // Scan through ALL pages of the entire document
+            // Case-insensitive: huruf besar dan kecil (a dan A) terbaca sama
             for (pageIdx in 0 until totalPages) {
+                if (matchCount >= maxMatches) break
+
                 val pageText = if (pageIdx < extractedDocumentPages.size) {
                     extractedDocumentPages[pageIdx]
                 } else {
@@ -695,20 +740,22 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 }
 
                 if (pageText.isNotBlank()) {
+                    val pageFoundOffsets = mutableSetOf<Int>()
                     var startIndex = 0
-                    val pageTextLower = pageText.lowercase()
 
-                    while (startIndex < pageText.length) {
-                        val foundIndex = pageTextLower.indexOf(queryLower, startIndex)
+                    // 1. Direct case-insensitive search: 'a' and 'A' match identically
+                    while (startIndex < pageText.length && matchCount < maxMatches) {
+                        val foundIndex = pageText.indexOf(query, startIndex, ignoreCase = true)
                         if (foundIndex == -1) break
 
-                        // Extract surrounding contextual snippet
+                        pageFoundOffsets.add(foundIndex)
                         val snippetStart = (foundIndex - 35).coerceAtLeast(0)
                         val snippetEnd = (foundIndex + query.length + 50).coerceAtMost(pageText.length)
                         val rawSnippet = pageText.substring(snippetStart, snippetEnd).trim()
                         val prefix = if (snippetStart > 0) "… " else ""
                         val suffix = if (snippetEnd < pageText.length) " …" else ""
                         val formattedSnippet = "$prefix$rawSnippet$suffix"
+                        val topFraction = (foundIndex.toFloat() / maxOf(1, pageText.length)).coerceIn(0.08f, 0.92f)
 
                         matchCount++
                         results.add(
@@ -718,12 +765,41 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                                 pageOrChapterTitle = "Halaman ${pageIdx + 1}",
                                 snippet = formattedSnippet,
                                 matchWord = query,
-                                characterOffset = foundIndex
+                                characterOffset = foundIndex,
+                                normalizedTopFraction = topFraction
                             )
                         )
 
-                        // Advance search past current match
                         startIndex = foundIndex + maxOf(1, query.length)
+                    }
+
+                    // 2. Flexible spaced/kerning match (e.g., words split across font glyphs)
+                    if (spacedRegex != null && matchCount < maxMatches) {
+                        spacedRegex.findAll(pageText).forEach { match ->
+                            if (matchCount < maxMatches && !pageFoundOffsets.contains(match.range.first)) {
+                                pageFoundOffsets.add(match.range.first)
+                                val snippetStart = (match.range.first - 35).coerceAtLeast(0)
+                                val snippetEnd = (match.range.last + 50).coerceAtMost(pageText.length)
+                                val rawSnippet = pageText.substring(snippetStart, snippetEnd).trim()
+                                val prefix = if (snippetStart > 0) "… " else ""
+                                val suffix = if (snippetEnd < pageText.length) " …" else ""
+                                val formattedSnippet = "$prefix$rawSnippet$suffix"
+                                val topFraction = (match.range.first.toFloat() / maxOf(1, pageText.length)).coerceIn(0.08f, 0.92f)
+
+                                matchCount++
+                                results.add(
+                                    SearchResult(
+                                        id = "pdf_match_flex_${pageIdx}_${match.range.first}_$matchCount",
+                                        pageOrChapterIndex = pageIdx,
+                                        pageOrChapterTitle = "Halaman ${pageIdx + 1}",
+                                        snippet = formattedSnippet,
+                                        matchWord = match.value,
+                                        characterOffset = match.range.first,
+                                        normalizedTopFraction = topFraction
+                                    )
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -739,9 +815,34 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                             pageOrChapterTitle = "Halaman 1 (Judul Dokumen)",
                             snippet = "Kecocokan pada judul dokumen: \"$bookTitle\"",
                             matchWord = query,
-                            characterOffset = 0
+                            characterOffset = 0,
+                            normalizedTopFraction = 0.15f
                         )
                     )
+                }
+                val bookAuthor = currentBook.author
+                if (bookAuthor.contains(query, ignoreCase = true)) {
+                    results.add(
+                        SearchResult(
+                            id = "pdf_author_match",
+                            pageOrChapterIndex = 0,
+                            pageOrChapterTitle = "Halaman 1 (Penulis)",
+                            snippet = "Kecocokan pada nama penulis: \"$bookAuthor\"",
+                            matchWord = query,
+                            characterOffset = 0,
+                            normalizedTopFraction = 0.25f
+                        )
+                    )
+                }
+            }
+
+            // Retrieve precise highlight bounding boxes from PdfDocumentHelper for matched pages
+            val highlightMap = mutableMapOf<Int, List<com.example.data.parser.SearchHighlightBox>>()
+            val matchedPageIndices = results.map { it.pageOrChapterIndex }.distinct()
+            for (pIdx in matchedPageIndices) {
+                val boxes = pdfHelper.getSearchHighlightsForPage(pIdx, query)
+                if (boxes.isNotEmpty()) {
+                    highlightMap[pIdx] = boxes
                 }
             }
 
@@ -750,7 +851,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                     it.copy(
                         isSearching = false,
                         searchResults = results,
-                        currentSearchResultIndex = if (results.isNotEmpty()) 0 else -1
+                        currentSearchResultIndex = if (results.isNotEmpty()) 0 else -1,
+                        searchHighlightBoxes = highlightMap
                     )
                 }
             }
@@ -794,7 +896,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 searchQuery = "",
                 searchResults = emptyList(),
                 currentSearchResultIndex = -1,
-                isSearching = false
+                isSearching = false,
+                searchHighlightBoxes = emptyMap()
             )
         }
     }

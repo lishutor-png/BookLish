@@ -83,4 +83,48 @@ class ExampleRobolectricTest {
     val extracted = com.example.data.parser.PdfTextExtractor.extractTextFromPdfContentStream(streamText.toByteArray())
     org.junit.Assert.assertTrue(extracted.contains("Halo Dunia LishPDF"))
   }
+
+  @Test
+  fun `PdfTextExtractor preserves whole words across TJ array and kerning`() {
+    val streamText = "BT /F1 12 Tf [(P) 10 (AND) 5 (UAN)] TJ ET"
+    val extracted = com.example.data.parser.PdfTextExtractor.extractTextFromPdfContentStream(streamText.toByteArray())
+    org.junit.Assert.assertTrue("Should extract whole word PANDUAN without spaces, but was: $extracted", extracted.contains("PANDUAN"))
+  }
+
+  @Test
+  fun `case-insensitive search treats 'a' and 'A' identically`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val sampleBook = com.example.data.model.BookEntity(
+      title = "Panduan Pintar LishPDF & Fitur Coretan",
+      localFilePath = "/data/user/0/com.example/files/books/panduan_lengkap_lishpdf.pdf",
+      fileType = "PDF",
+      totalPages = 4
+    )
+    val pagesText = com.example.data.parser.PdfTextExtractor.extractPagesText(context, sampleBook, 4)
+    org.junit.Assert.assertTrue("Pages text should not be empty", pagesText.isNotEmpty())
+
+    // Counting matches for 'a' vs 'A'
+    var countLowerA = 0
+    var countUpperA = 0
+    for (text in pagesText) {
+      for (char in text) {
+        if (char.equals('a', ignoreCase = true)) countLowerA++
+        if (char.equals('A', ignoreCase = true)) countUpperA++
+      }
+    }
+    assertEquals("Lowercase 'a' and uppercase 'A' case-insensitive count must match", countLowerA, countUpperA)
+    org.junit.Assert.assertTrue("Should find 'a' in document", countLowerA > 0)
+
+    // Checking word search case-insensitivity: "PANDUAN" vs "panduan"
+    val matchUpper = pagesText.count { it.contains("PANDUAN", ignoreCase = true) }
+    val matchLower = pagesText.count { it.contains("panduan", ignoreCase = true) }
+    assertEquals("Uppercase PANDUAN and lowercase panduan must match same page count", matchUpper, matchLower)
+    org.junit.Assert.assertTrue("Should find panduan in document", matchLower >= 1)
+
+    // Checking word across multiple pages: "CORETAN" vs "coretan"
+    val matchUpperCoretan = pagesText.count { it.contains("CORETAN", ignoreCase = true) }
+    val matchLowerCoretan = pagesText.count { it.contains("coretan", ignoreCase = true) }
+    assertEquals("Uppercase CORETAN and lowercase coretan must match", matchUpperCoretan, matchLowerCoretan)
+    org.junit.Assert.assertTrue("Should find coretan across multiple pages", matchLowerCoretan >= 3)
+  }
 }

@@ -125,8 +125,8 @@ object PdfTextExtractor {
             searchIndex = streamPos + streamMarker.size
         }
 
-        // Find all /Type /Page objects
-        val pageObjRegex = Regex("""(\d+)\s+\d+\s+obj\s*<<[^>]*?/Type\s*/Page\b([^>]*)>>""", RegexOption.DOT_MATCHES_ALL)
+        // Find all Page objects (from <id> 0 obj to endobj containing /Type /Page)
+        val pageObjRegex = Regex("""(\d+)\s+\d+\s+obj\b[\s\S]*?/Type\s*/Page\b[\s\S]*?endobj""", RegexOption.DOT_MATCHES_ALL)
         val pageMatches = pageObjRegex.findAll(textAscii).toList()
 
         val pagesText = mutableListOf<String>()
@@ -165,7 +165,6 @@ object PdfTextExtractor {
             }
 
             if (allStreamTexts.isNotEmpty()) {
-                // If expectedPages matches or is known, distribute or map
                 if (expectedPages > 0 && allStreamTexts.size >= expectedPages) {
                     return allStreamTexts.take(expectedPages)
                 }
@@ -178,7 +177,6 @@ object PdfTextExtractor {
 
     private fun extractContentsIds(pageDict: String): List<Int> {
         val ids = mutableListOf<Int>()
-        // Match /Contents 12 0 R or /Contents [ 12 0 R 13 0 R ]
         val arrayMatch = Regex("""/Contents\s*\[\s*([^\]]+)\]""").find(pageDict)
         if (arrayMatch != null) {
             val refs = Regex("""(\d+)\s+\d+\s+R""").findAll(arrayMatch.groupValues[1])
@@ -209,7 +207,6 @@ object PdfTextExtractor {
             inflater.end()
             outputStream.toByteArray()
         } catch (e: Exception) {
-            // Fallback: Try InflaterInputStream with wrapped ByteArrayInputStream
             try {
                 InflaterInputStream(ByteArrayInputStream(streamObj.streamData)).use { it.readBytes() }
             } catch (e2: Exception) {
@@ -232,11 +229,23 @@ object PdfTextExtractor {
         val blocks = if (btBlocks.isNotEmpty()) btBlocks else listOf(content)
 
         for (block in blocks) {
-            // Extract from (string) Tj, (string) ', (string) "
-            // And [(string1) -10 (string2)] TJ
             var i = 0
+            var inArray = false
             while (i < block.length) {
                 val ch = block[i]
+                if (ch == '[') {
+                    inArray = true
+                    i++
+                    continue
+                } else if (ch == ']') {
+                    inArray = false
+                    if (sb.isNotEmpty() && !sb.endsWith(" ")) {
+                        sb.append(" ")
+                    }
+                    i++
+                    continue
+                }
+
                 if (ch == '(') {
                     // Literal string in parentheses
                     val strBuilder = StringBuilder()
@@ -255,7 +264,6 @@ object PdfTextExtractor {
                                 '(' -> strBuilder.append('(')
                                 ')' -> strBuilder.append(')')
                                 in '0'..'7' -> {
-                                    // Octal
                                     var octalStr = "$c"
                                     if (i + 1 < block.length && block[i + 1] in '0'..'7') {
                                         i++
@@ -286,9 +294,17 @@ object PdfTextExtractor {
                         }
                         i++
                     }
-                    val extracted = strBuilder.toString().trim()
+                    val extracted = strBuilder.toString()
                     if (extracted.isNotBlank()) {
-                        sb.append(extracted).append(" ")
+                        if (extracted.startsWith(" ") && sb.isNotEmpty() && !sb.endsWith(" ")) {
+                            sb.append(" ")
+                        }
+                        sb.append(extracted.trim())
+                        if (extracted.endsWith(" ") || !inArray) {
+                            if (sb.isNotEmpty() && !sb.endsWith(" ")) {
+                                sb.append(" ")
+                            }
+                        }
                     }
                 } else if (ch == '<' && i + 1 < block.length && block[i + 1] != '<') {
                     // Hex string <...>
@@ -304,11 +320,36 @@ object PdfTextExtractor {
                     val hexStr = hexBuilder.toString()
                     val decoded = decodeHexString(hexStr)
                     if (decoded.isNotBlank()) {
-                        sb.append(decoded).append(" ")
+                        if (decoded.startsWith(" ") && sb.isNotEmpty() && !sb.endsWith(" ")) {
+                            sb.append(" ")
+                        }
+                        sb.append(decoded.trim())
+                        if (decoded.endsWith(" ") || !inArray) {
+                            if (sb.isNotEmpty() && !sb.endsWith(" ")) {
+                                sb.append(" ")
+                            }
+                        }
                     }
+                } else if (inArray && (ch == '-' || ch == '+') && i + 2 < block.length && block[i + 1].isDigit()) {
+                    // Check for kerning offset in TJ array: negative spacing indicates word break
+                    var numStr = "$ch"
+                    var k = i + 1
+                    while (k < block.length && (block[k].isDigit() || block[k] == '.')) {
+                        numStr += block[k]
+                        k++
+                    }
+                    val spacing = numStr.toFloatOrNull() ?: 0f
+                    if (spacing <= -150f && sb.isNotEmpty() && !sb.endsWith(" ")) {
+                        sb.append(" ")
+                    }
+                    i = k
+                    continue
                 } else {
                     i++
                 }
+            }
+            if (sb.isNotEmpty() && !sb.endsWith(" ")) {
+                sb.append(" ")
             }
         }
 

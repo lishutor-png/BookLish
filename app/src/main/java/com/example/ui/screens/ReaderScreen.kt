@@ -30,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asImageBitmap
@@ -39,8 +40,11 @@ import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -48,6 +52,7 @@ import com.example.data.model.*
 import com.example.ui.components.*
 import com.example.ui.viewmodel.ReaderUiState
 import com.example.ui.viewmodel.ReaderViewModel
+import com.example.ui.viewmodel.SearchResult
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -274,12 +279,23 @@ fun ReaderScreen(
                         count = uiState.totalPages,
                         key = { pageIdx -> "pdf_page_$pageIdx" }
                     ) { pageIdx ->
+                        val pageMatches = uiState.searchResults.filter { it.pageOrChapterIndex == pageIdx }
+                        val activeResult = if (uiState.currentSearchResultIndex in uiState.searchResults.indices) {
+                            uiState.searchResults[uiState.currentSearchResultIndex]
+                        } else null
+                        val isCurrentMatchPage = activeResult?.pageOrChapterIndex == pageIdx
+
                         ContinuousPdfPageCard(
                             pageIndex = pageIdx,
                             totalPages = uiState.totalPages,
                             isCurrentPage = pageIdx == uiState.currentPageIndex,
                             theme = theme,
                             viewModel = viewModel,
+                            searchQuery = uiState.searchQuery,
+                            searchHighlightBoxes = uiState.searchHighlightBoxes[pageIdx] ?: emptyList(),
+                            pageSearchResults = pageMatches,
+                            isCurrentSearchMatchPage = isCurrentMatchPage,
+                            activeMatchSnippet = if (isCurrentMatchPage) activeResult?.snippet else null,
                             onAnnotateThisPage = {
                                 viewModel.goToPage(pageIdx)
                                 viewModel.setActiveTool(ActiveDrawingTool.PEN)
@@ -520,6 +536,56 @@ fun ReaderScreen(
                                 .fillMaxSize()
                                 .padding(4.dp)
                         )
+                    }
+
+                    // 1.5 Search Highlight Overlay for active page in Single Page Mode
+                    val activePageHighlights = uiState.searchHighlightBoxes[uiState.currentPageIndex] ?: emptyList()
+                    val activePageSearchResults = uiState.searchResults.filter { it.pageOrChapterIndex == uiState.currentPageIndex }
+                    if (activePageHighlights.isNotEmpty() || activePageSearchResults.isNotEmpty()) {
+                        androidx.compose.foundation.Canvas(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(4.dp)
+                        ) {
+                            if (activePageHighlights.isNotEmpty()) {
+                                for (box in activePageHighlights) {
+                                    val left = box.normalizedLeft * size.width
+                                    val top = box.normalizedTop * size.height
+                                    val right = box.normalizedRight * size.width
+                                    val bottom = box.normalizedBottom * size.height
+                                    val w = (right - left).coerceAtLeast(10.dp.toPx())
+                                    val h = (bottom - top).coerceAtLeast(14.dp.toPx())
+                                    drawRect(
+                                        color = Color(0xFFFFEB3B).copy(alpha = 0.55f),
+                                        topLeft = Offset(left, top),
+                                        size = Size(w, h)
+                                    )
+                                    drawRect(
+                                        color = Color(0xFFF57F17),
+                                        topLeft = Offset(left, top),
+                                        size = Size(w, h),
+                                        style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.5.dp.toPx())
+                                    )
+                                }
+                            } else {
+                                for (res in activePageSearchResults) {
+                                    val yPos = res.normalizedTopFraction * size.height
+                                    val barHeight = 24.dp.toPx()
+                                    val top = (yPos - barHeight / 2f).coerceIn(0f, size.height - barHeight)
+                                    drawRect(
+                                        color = Color(0xFFFFEB3B).copy(alpha = 0.40f),
+                                        topLeft = Offset(6.dp.toPx(), top),
+                                        size = Size(size.width - 12.dp.toPx(), barHeight)
+                                    )
+                                    drawRect(
+                                        color = Color(0xFFFFA000).copy(alpha = 0.85f),
+                                        topLeft = Offset(6.dp.toPx(), top),
+                                        size = Size(size.width - 12.dp.toPx(), barHeight),
+                                        style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx())
+                                    )
+                                }
+                            }
+                        }
                     }
 
                     // 2. Vector Drawing Overlay (Committed Strokes & Real-time Live Stroke)
@@ -847,110 +913,167 @@ fun ReaderScreen(
                             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f),
                             border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f))
                         ) {
-                            Row(
+                            Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(horizontal = 10.dp, vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
+                                    .padding(horizontal = 10.dp, vertical = 4.dp)
                             ) {
-                                // Left: Search keyword & matches counter
                                 Row(
+                                    modifier = Modifier.fillMaxWidth(),
                                     verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .clickable { viewModel.setSearchSheetOpen(true) }
+                                    horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
-                                    Icon(
-                                        Icons.Default.Search,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = "\"${uiState.searchQuery}\"",
-                                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        color = MaterialTheme.colorScheme.onSurface,
-                                        modifier = Modifier.weight(1f, fill = false)
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    val currentMatchNumber = uiState.currentSearchResultIndex + 1
-                                    val currentMatchPage = if (uiState.currentSearchResultIndex in uiState.searchResults.indices) {
-                                        uiState.searchResults[uiState.currentSearchResultIndex].pageOrChapterIndex + 1
-                                    } else {
-                                        uiState.currentPageIndex + 1
-                                    }
-                                    Surface(
-                                        shape = RoundedCornerShape(6.dp),
-                                        color = MaterialTheme.colorScheme.primaryContainer,
-                                        contentColor = MaterialTheme.colorScheme.primary
+                                    // Left: Search keyword & matches counter
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clickable { viewModel.setSearchSheetOpen(true) }
                                     ) {
-                                        Text(
-                                            text = "$currentMatchNumber/${uiState.searchResults.size} • Hal. $currentMatchPage",
-                                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        Icon(
+                                            Icons.Default.Search,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(16.dp)
                                         )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = "\"${uiState.searchQuery}\"",
+                                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            modifier = Modifier.weight(1f, fill = false)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        val currentMatchNumber = uiState.currentSearchResultIndex + 1
+                                        val currentMatchPage = if (uiState.currentSearchResultIndex in uiState.searchResults.indices) {
+                                            uiState.searchResults[uiState.currentSearchResultIndex].pageOrChapterIndex + 1
+                                        } else {
+                                            uiState.currentPageIndex + 1
+                                        }
+                                        Surface(
+                                            shape = RoundedCornerShape(6.dp),
+                                            color = MaterialTheme.colorScheme.primaryContainer,
+                                            contentColor = MaterialTheme.colorScheme.primary
+                                        ) {
+                                            Text(
+                                                text = "$currentMatchNumber/${uiState.searchResults.size} • Hal. $currentMatchPage",
+                                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+
+                                    // Right: Prev, Next, List, Close buttons
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        IconButton(
+                                            onClick = { viewModel.previousSearchResult() },
+                                            modifier = Modifier
+                                                .size(34.dp)
+                                                .testTag("search_prev_button")
+                                        ) {
+                                            Icon(
+                                                Icons.Default.KeyboardArrowUp,
+                                                contentDescription = "Hasil Sebelumnya",
+                                                tint = MaterialTheme.colorScheme.onSurface,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
+
+                                        IconButton(
+                                            onClick = { viewModel.nextSearchResult() },
+                                            modifier = Modifier
+                                                .size(34.dp)
+                                                .testTag("search_next_button")
+                                        ) {
+                                            Icon(
+                                                Icons.Default.KeyboardArrowDown,
+                                                contentDescription = "Hasil Berikutnya",
+                                                tint = MaterialTheme.colorScheme.onSurface,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
+
+                                        IconButton(
+                                            onClick = { viewModel.setSearchSheetOpen(true) },
+                                            modifier = Modifier
+                                                .size(34.dp)
+                                                .testTag("search_list_button")
+                                        ) {
+                                            Icon(
+                                                Icons.Default.FormatListBulleted,
+                                                contentDescription = "Daftar Hasil",
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+
+                                        IconButton(
+                                            onClick = { viewModel.clearSearch() },
+                                            modifier = Modifier
+                                                .size(34.dp)
+                                                .testTag("search_close_button")
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Close,
+                                                contentDescription = "Tutup Pencarian",
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
                                     }
                                 }
 
-                                // Right: Prev, Next, List, Close buttons
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    IconButton(
-                                        onClick = { viewModel.previousSearchResult() },
-                                        modifier = Modifier
-                                            .size(34.dp)
-                                            .testTag("search_prev_button")
-                                    ) {
-                                        Icon(
-                                            Icons.Default.KeyboardArrowUp,
-                                            contentDescription = "Hasil Sebelumnya",
-                                            tint = MaterialTheme.colorScheme.onSurface,
-                                            modifier = Modifier.size(20.dp)
-                                        )
+                                if (uiState.currentSearchResultIndex in uiState.searchResults.indices) {
+                                    val activeRes = uiState.searchResults[uiState.currentSearchResultIndex]
+                                    val trimmedQ = uiState.searchQuery.trim()
+                                    val qTarget = if (trimmedQ.isNotEmpty()) trimmedQ else activeRes.matchWord
+                                    val snippetAnnotated = buildAnnotatedString {
+                                        val text = activeRes.snippet
+                                        var lastIdx = 0
+                                        val pattern = try {
+                                            Regex(Regex.escape(qTarget), RegexOption.IGNORE_CASE)
+                                        } catch (e: Exception) {
+                                            null
+                                        }
+                                        val matches = pattern?.findAll(text)?.toList() ?: emptyList()
+                                        if (matches.isNotEmpty()) {
+                                            matches.forEach { match ->
+                                                if (match.range.first > lastIdx) {
+                                                    append(text.substring(lastIdx, match.range.first))
+                                                }
+                                                withStyle(
+                                                    style = SpanStyle(
+                                                        background = Color(0xFFFFEB3B),
+                                                        color = Color(0xFF1B1B1F),
+                                                        fontWeight = FontWeight.Black
+                                                    )
+                                                ) {
+                                                    append(match.value)
+                                                }
+                                                lastIdx = match.range.last + 1
+                                            }
+                                            if (lastIdx < text.length) append(text.substring(lastIdx))
+                                        } else {
+                                            append(text)
+                                        }
                                     }
 
-                                    IconButton(
-                                        onClick = { viewModel.nextSearchResult() },
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                                         modifier = Modifier
-                                            .size(34.dp)
-                                            .testTag("search_next_button")
+                                            .fillMaxWidth()
+                                            .padding(top = 2.dp, bottom = 2.dp)
+                                            .clickable { viewModel.setSearchSheetOpen(true) }
                                     ) {
-                                        Icon(
-                                            Icons.Default.KeyboardArrowDown,
-                                            contentDescription = "Hasil Berikutnya",
-                                            tint = MaterialTheme.colorScheme.onSurface,
-                                            modifier = Modifier.size(20.dp)
-                                        )
-                                    }
-
-                                    IconButton(
-                                        onClick = { viewModel.setSearchSheetOpen(true) },
-                                        modifier = Modifier
-                                            .size(34.dp)
-                                            .testTag("search_list_button")
-                                    ) {
-                                        Icon(
-                                            Icons.Default.FormatListBulleted,
-                                            contentDescription = "Daftar Hasil",
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                    }
-
-                                    IconButton(
-                                        onClick = { viewModel.clearSearch() },
-                                        modifier = Modifier
-                                            .size(34.dp)
-                                            .testTag("search_close_button")
-                                    ) {
-                                        Icon(
-                                            Icons.Default.Close,
-                                            contentDescription = "Tutup Pencarian",
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.size(18.dp)
+                                        Text(
+                                            text = snippetAnnotated,
+                                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                         )
                                     }
                                 }
@@ -1312,6 +1435,11 @@ private fun ContinuousPdfPageCard(
     isCurrentPage: Boolean,
     theme: ReadingTheme,
     viewModel: ReaderViewModel,
+    searchQuery: String = "",
+    searchHighlightBoxes: List<com.example.data.parser.SearchHighlightBox> = emptyList(),
+    pageSearchResults: List<SearchResult> = emptyList(),
+    isCurrentSearchMatchPage: Boolean = false,
+    activeMatchSnippet: String? = null,
     onAnnotateThisPage: () -> Unit
 ) {
     var pageBitmap by remember(pageIndex, theme) {
@@ -1328,10 +1456,10 @@ private fun ContinuousPdfPageCard(
         shape = RoundedCornerShape(12.dp),
         color = Color(theme.surfaceColor),
         border = BorderStroke(
-            width = if (isCurrentPage) 1.5.dp else 1.dp,
-            color = if (isCurrentPage) MaterialTheme.colorScheme.primary.copy(alpha = 0.6f) else MaterialTheme.colorScheme.outlineVariant
+            width = if (isCurrentSearchMatchPage) 2.5.dp else if (isCurrentPage) 1.5.dp else 1.dp,
+            color = if (isCurrentSearchMatchPage) Color(0xFFFFB300) else if (isCurrentPage) MaterialTheme.colorScheme.primary.copy(alpha = 0.6f) else MaterialTheme.colorScheme.outlineVariant
         ),
-        shadowElevation = 3.dp,
+        shadowElevation = if (isCurrentSearchMatchPage) 6.dp else 3.dp,
         modifier = Modifier
             .fillMaxWidth()
             .testTag("continuous_page_card_$pageIndex")
@@ -1349,7 +1477,7 @@ private fun ContinuousPdfPageCard(
                 Text(
                     text = "Halaman ${pageIndex + 1} dari $totalPages",
                     style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                    color = if (isCurrentPage) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                    color = if (isCurrentSearchMatchPage) Color(0xFFE65100) else if (isCurrentPage) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
                 Surface(
@@ -1380,18 +1508,133 @@ private fun ContinuousPdfPageCard(
                 }
             }
 
-            // Rendered PDF Page Content
+            // Search Matches Banner on this page
+            if (pageSearchResults.isNotEmpty()) {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color(0xFFFFF9C4),
+                    border = BorderStroke(1.dp, Color(0xFFFFD54F)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                        .testTag("continuous_page_highlight_banner_$pageIndex")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Default.Search,
+                            contentDescription = null,
+                            tint = Color(0xFFE65100),
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "${pageSearchResults.size} kata \"${searchQuery.trim()}\" disorot pada halaman ini",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF5D4037)
+                            )
+                        )
+                    }
+                }
+            }
+
+            // Active Search Match Snippet Callout
+            if (isCurrentSearchMatchPage && !activeMatchSnippet.isNullOrBlank()) {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color(0xFFFFF176).copy(alpha = 0.95f),
+                    border = BorderStroke(1.5.dp, Color(0xFFFFA000)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 2.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "⭐ Sorotan: ",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontWeight = FontWeight.Black,
+                                color = Color(0xFFBF360C)
+                            )
+                        )
+                        Text(
+                            text = activeMatchSnippet,
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFF212121)
+                            ),
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+
+            // Rendered PDF Page Content with In-Page Search Highlights
             val bmp = pageBitmap
             if (bmp != null && !bmp.isRecycled) {
                 val aspectRatio = (bmp.width.toFloat() / bmp.height.toFloat()).coerceIn(0.4f, 2.2f)
-                Image(
-                    bitmap = bmp.asImageBitmap(),
-                    contentDescription = "Halaman ${pageIndex + 1}",
-                    contentScale = ContentScale.FillWidth,
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .aspectRatio(aspectRatio)
-                )
+                ) {
+                    Image(
+                        bitmap = bmp.asImageBitmap(),
+                        contentDescription = "Halaman ${pageIndex + 1}",
+                        contentScale = ContentScale.FillWidth,
+                        modifier = Modifier.fillMaxSize()
+                    )
+
+                    // Draw highlight rectangles/bands directly over the page
+                    if (searchHighlightBoxes.isNotEmpty() || pageSearchResults.isNotEmpty()) {
+                        androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
+                            if (searchHighlightBoxes.isNotEmpty()) {
+                                for (box in searchHighlightBoxes) {
+                                    val left = box.normalizedLeft * size.width
+                                    val top = box.normalizedTop * size.height
+                                    val right = box.normalizedRight * size.width
+                                    val bottom = box.normalizedBottom * size.height
+                                    val w = (right - left).coerceAtLeast(10.dp.toPx())
+                                    val h = (bottom - top).coerceAtLeast(14.dp.toPx())
+                                    drawRect(
+                                        color = Color(0xFFFFEB3B).copy(alpha = 0.55f),
+                                        topLeft = Offset(left, top),
+                                        size = Size(w, h)
+                                    )
+                                    drawRect(
+                                        color = Color(0xFFF57F17),
+                                        topLeft = Offset(left, top),
+                                        size = Size(w, h),
+                                        style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.5.dp.toPx())
+                                    )
+                                }
+                            } else {
+                                for (res in pageSearchResults) {
+                                    val yPos = res.normalizedTopFraction * size.height
+                                    val barHeight = 24.dp.toPx()
+                                    val top = (yPos - barHeight / 2f).coerceIn(0f, size.height - barHeight)
+                                    drawRect(
+                                        color = Color(0xFFFFEB3B).copy(alpha = 0.40f),
+                                        topLeft = Offset(6.dp.toPx(), top),
+                                        size = Size(size.width - 12.dp.toPx(), barHeight)
+                                    )
+                                    drawRect(
+                                        color = Color(0xFFFFA000).copy(alpha = 0.85f),
+                                        topLeft = Offset(6.dp.toPx(), top),
+                                        size = Size(size.width - 12.dp.toPx(), barHeight),
+                                        style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx())
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
             } else {
                 Box(
                     modifier = Modifier

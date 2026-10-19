@@ -139,7 +139,7 @@ fun SearchSheet(
                         )
                     }
                 }
-            } else if (searchQuery.length >= 2) {
+            } else if (searchQuery.isNotBlank()) {
                 val distinctPages = searchResults.map { it.pageOrChapterIndex }.distinct().size
                 Row(
                     modifier = Modifier
@@ -150,7 +150,7 @@ fun SearchSheet(
                 ) {
                     Text(
                         text = if (searchResults.isNotEmpty()) {
-                            "Ditemukan ${searchResults.size} kecocokan di $distinctPages halaman"
+                            "Ditemukan ${searchResults.size} kecocokan di $distinctPages halaman (A = a)"
                         } else {
                             "Tidak ada kecocokan"
                         },
@@ -186,7 +186,7 @@ fun SearchSheet(
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                             Text(
-                                text = "Pastikan ejaan kata benar atau coba kata kunci yang lebih umum.",
+                                text = "Pencarian huruf besar & kecil sama (a = A). Pastikan ejaan benar atau coba kata kunci lain.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -220,12 +220,12 @@ fun SearchSheet(
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Text(
-                            text = "Ketik minimal 2 huruf untuk mulai mencari",
+                            text = "Ketik kata atau huruf yang ingin dicari",
                             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
-                            text = "Pencarian otomatis memindai seluruh isi halaman dokumen",
+                            text = "Pencarian memindai seluruh halaman. Huruf besar dan kecil (a dan A) terbaca sama.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -278,30 +278,74 @@ fun SearchResultItemCard(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Highlight the searched keyword in snippet
-            val primaryContainerColor = MaterialTheme.colorScheme.primaryContainer
-            val primaryColor = MaterialTheme.colorScheme.primary
+            // Highlight the searched keyword in snippet using high-visibility Stabilo Yellow
+            val trimmedQuery = searchQuery.trim()
+            val queryTarget = if (trimmedQuery.isNotEmpty()) trimmedQuery else result.matchWord
+            val highlightBg = Color(0xFFFFEB3B) // Vibrant Highlighter Yellow
+            val highlightTextColor = Color(0xFF1B1B1F) // Deep contrast text on yellow
+
             val annotatedSnippet = buildAnnotatedString {
                 val snippetText = result.snippet
-                var lastIdx = 0
-                val pattern = Regex(Regex.escape(searchQuery), RegexOption.IGNORE_CASE)
-                pattern.findAll(snippetText).forEach { match ->
-                    if (match.range.first > lastIdx) {
-                        append(snippetText.substring(lastIdx, match.range.first))
+                if (queryTarget.isEmpty()) {
+                    append(snippetText)
+                } else {
+                    var lastIdx = 0
+                    val pattern = try {
+                        Regex(Regex.escape(queryTarget), RegexOption.IGNORE_CASE)
+                    } catch (e: Exception) {
+                        null
                     }
-                    withStyle(
-                        style = SpanStyle(
-                            background = primaryContainerColor,
-                            color = primaryColor,
-                            fontWeight = FontWeight.Bold
-                        )
-                    ) {
-                        append(match.value)
+                    val matches = pattern?.findAll(snippetText)?.toList() ?: emptyList()
+                    if (matches.isNotEmpty()) {
+                        matches.forEach { match ->
+                            if (match.range.first > lastIdx) {
+                                append(snippetText.substring(lastIdx, match.range.first))
+                            }
+                            withStyle(
+                                style = SpanStyle(
+                                    background = highlightBg,
+                                    color = highlightTextColor,
+                                    fontWeight = FontWeight.Black
+                                )
+                            ) {
+                                append(match.value)
+                            }
+                            lastIdx = match.range.last + 1
+                        }
+                        if (lastIdx < snippetText.length) {
+                            append(snippetText.substring(lastIdx))
+                        }
+                    } else {
+                        // Fallback: match matchWord if query didn't match directly
+                        val altPattern = try {
+                            Regex(Regex.escape(result.matchWord), RegexOption.IGNORE_CASE)
+                        } catch (e: Exception) {
+                            null
+                        }
+                        val altMatches = altPattern?.findAll(snippetText)?.toList() ?: emptyList()
+                        if (altMatches.isNotEmpty()) {
+                            altMatches.forEach { match ->
+                                if (match.range.first > lastIdx) {
+                                    append(snippetText.substring(lastIdx, match.range.first))
+                                }
+                                withStyle(
+                                    style = SpanStyle(
+                                        background = highlightBg,
+                                        color = highlightTextColor,
+                                        fontWeight = FontWeight.Black
+                                    )
+                                ) {
+                                    append(match.value)
+                                }
+                                lastIdx = match.range.last + 1
+                            }
+                            if (lastIdx < snippetText.length) {
+                                append(snippetText.substring(lastIdx))
+                            }
+                        } else {
+                            append(snippetText)
+                        }
                     }
-                    lastIdx = match.range.last + 1
-                }
-                if (lastIdx < snippetText.length) {
-                    append(snippetText.substring(lastIdx))
                 }
             }
 
