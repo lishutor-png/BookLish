@@ -4,6 +4,9 @@ import android.content.Context
 import android.net.Uri
 import android.util.Log
 import com.example.data.model.BookEntity
+import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
+import com.tom_roush.pdfbox.pdmodel.PDDocument
+import com.tom_roush.pdfbox.text.PDFTextStripper
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -14,6 +17,18 @@ import java.util.zip.InflaterInputStream
 object PdfTextExtractor {
 
     private const val TAG = "PdfTextExtractor"
+    private var isPdfBoxInitialized = false
+
+    fun initPdfBox(context: Context) {
+        if (!isPdfBoxInitialized) {
+            try {
+                PDFBoxResourceLoader.init(context.applicationContext)
+                isPdfBoxInitialized = true
+            } catch (e: Throwable) {
+                Log.w(TAG, "Failed to initialize PDFBoxResourceLoader", e)
+            }
+        }
+    }
 
     /**
      * Extracts text page-by-page from a PDF file.
@@ -24,13 +39,47 @@ object PdfTextExtractor {
         book: BookEntity,
         totalPages: Int
     ): List<String> {
-        // 1. Check if this is a sample book with known structured content
+        // 1. Instant check: known structured content for sample books
         val sampleText = SamplePdfProvider.getSampleBookPagesText(book)
         if (sampleText != null && sampleText.isNotEmpty()) {
             return sampleText
         }
 
-        // 2. Try reading from local file path or URI
+        // 2. Primary: Industry-standard text extraction via PDFBox
+        try {
+            initPdfBox(context)
+            val file = if (book.localFilePath.isNotBlank()) File(book.localFilePath) else null
+            val document: PDDocument? = when {
+                file != null && file.exists() -> PDDocument.load(file)
+                book.fileUri.isNotBlank() -> {
+                    context.contentResolver.openInputStream(Uri.parse(book.fileUri))?.use {
+                        PDDocument.load(it)
+                    }
+                }
+                else -> null
+            }
+
+            if (document != null) {
+                val pages = mutableListOf<String>()
+                val stripper = PDFTextStripper()
+                stripper.sortByPosition = true
+                val numPages = document.numberOfPages
+                for (p in 1..numPages) {
+                    stripper.startPage = p
+                    stripper.endPage = p
+                    val text = stripper.getText(document)
+                    pages.add(cleanExtractedText(text))
+                }
+                document.close()
+                if (pages.any { it.isNotBlank() }) {
+                    return pages
+                }
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "PDFBox extraction failed for ${book.title}, using fallback stream parser", e)
+        }
+
+        // 3. Fallback: Direct PDF stream parser with word-preservation
         return try {
             val file = if (book.localFilePath.isNotBlank()) File(book.localFilePath) else null
             if (file != null && file.exists()) {
@@ -45,7 +94,7 @@ object PdfTextExtractor {
                 emptyList()
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error extracting text from PDF ${book.title}", e)
+            Log.e(TAG, "Error in fallback text extraction for ${book.title}", e)
             emptyList()
         }
     }
@@ -79,95 +128,83 @@ object PdfTextExtractor {
     )
 
     private fun extractPagesFromPdfBytes(bytes: ByteArray, expectedPages: Int): List<String> {
-        // Strategy 1: Find Page objects and their /Contents references
-        val textAscii = String(bytes, Charsets.ISO_8859_1)
+        val streamObjects = mutableMapOf<Int, PdfStreamObj>()
+        val pageDicts = mutableListOf<String>()
 
-        // Find all stream objects in the PDF
-        val streamObjs = mutableMapOf<Int, PdfStreamObj>()
-        val objHeaderRegex = Regex("""(\d+)\s+(\d+)\s+obj\b""")
-        val streamMarker = "stream".toByteArray(Charsets.ISO_8859_1)
-        val endstreamMarker = "endstream".toByteArray(Charsets.ISO_8859_1)
+        val pdfContent = String(bytes, Charsets.ISO_8859_1)
 
-        var searchIndex = 0
-        while (searchIndex < bytes.size) {
-            val streamPos = indexOfBytes(bytes, streamMarker, searchIndex)
-            if (streamPos == -1) break
-
-            // Find preceding obj declaration
-            val headerSearchStart = maxOf(0, streamPos - 400)
-            val headerSubstr = String(bytes.sliceArray(headerSearchStart until streamPos), Charsets.ISO_8859_1)
-            val match = objHeaderRegex.findAll(headerSubstr).lastOrNull()
-
-            if (match != null) {
-                val objId = match.groupValues[1].toIntOrNull() ?: 0
-                val gen = match.groupValues[2].toIntOrNull() ?: 0
-                val isFlate = headerSubstr.contains("/FlateDecode")
-
-                // Locate actual stream start (skipping CRLF or LF)
-                var dataStart = streamPos + streamMarker.size
-                if (dataStart < bytes.size && bytes[dataStart] == '\r'.code.toByte()) dataStart++
-                if (dataStart < bytes.size && bytes[dataStart] == '\n'.code.toByte()) dataStart++
-
-                // Find endstream
-                val endStreamPos = indexOfBytes(bytes, endstreamMarker, dataStart)
-                if (endStreamPos != -1 && endStreamPos > dataStart) {
-                    var dataEnd = endStreamPos
-                    // Trim trailing CRLF before endstream
-                    if (dataEnd > dataStart && bytes[dataEnd - 1] == '\n'.code.toByte()) dataEnd--
-                    if (dataEnd > dataStart && bytes[dataEnd - 1] == '\r'.code.toByte()) dataEnd--
-
-                    val streamBytes = bytes.copyOfRange(dataStart, dataEnd)
-                    streamObjs[objId] = PdfStreamObj(objId, gen, isFlate, streamBytes)
-                    searchIndex = endStreamPos + endstreamMarker.size
-                    continue
-                }
-            }
-            searchIndex = streamPos + streamMarker.size
+        // Find all page dictionary objects (/Type /Page)
+        val pageObjRegex = Regex("""(\d+)\s+(\d+)\s+obj\s*<<([^>]*/Type\s*/Page\b[^>]*)>>""", RegexOption.DOT_MATCHES_ALL)
+        for (match in pageObjRegex.findAll(pdfContent)) {
+            pageDicts.add(match.groupValues[3])
         }
 
-        // Find all Page objects (from <id> 0 obj to endobj containing /Type /Page)
-        val pageObjRegex = Regex("""(\d+)\s+\d+\s+obj\b[\s\S]*?/Type\s*/Page\b[\s\S]*?endobj""", RegexOption.DOT_MATCHES_ALL)
-        val pageMatches = pageObjRegex.findAll(textAscii).toList()
+        // Find all stream objects: obj ... stream ... endstream
+        val streamMarker = "stream".toByteArray(Charsets.ISO_8859_1)
+        val endStreamMarker = "endstream".toByteArray(Charsets.ISO_8859_1)
+        val objMarker = "obj".toByteArray(Charsets.ISO_8859_1)
 
+        var searchPos = 0
+        while (searchPos < bytes.size) {
+            val streamIdx = indexOfBytes(bytes, streamMarker, searchPos)
+            if (streamIdx == -1) break
+
+            var dataStart = streamIdx + streamMarker.size
+            if (dataStart < bytes.size && bytes[dataStart] == '\r'.code.toByte()) dataStart++
+            if (dataStart < bytes.size && bytes[dataStart] == '\n'.code.toByte()) dataStart++
+
+            val endStreamIdx = indexOfBytes(bytes, endStreamMarker, dataStart)
+            if (endStreamIdx == -1) break
+
+            var dataEnd = endStreamIdx
+            if (dataEnd > dataStart && bytes[dataEnd - 1] == '\n'.code.toByte()) dataEnd--
+            if (dataEnd > dataStart && bytes[dataEnd - 1] == '\r'.code.toByte()) dataEnd--
+
+            val headerStart = maxOf(0, streamIdx - 512)
+            val headerString = String(bytes.sliceArray(headerStart until streamIdx), Charsets.ISO_8859_1)
+
+            val objMatch = Regex("""(\d+)\s+(\d+)\s+obj""").findAll(headerString).lastOrNull()
+            if (objMatch != null) {
+                val objId = objMatch.groupValues[1].toIntOrNull() ?: 0
+                val gen = objMatch.groupValues[2].toIntOrNull() ?: 0
+                val isFlate = headerString.contains("/FlateDecode")
+                val streamBytes = bytes.sliceArray(dataStart until maxOf(dataStart, dataEnd))
+                streamObjects[objId] = PdfStreamObj(objId, gen, isFlate, streamBytes)
+            }
+
+            searchPos = endStreamIdx + endStreamMarker.size
+        }
+
+        // Map pages to their stream content
         val pagesText = mutableListOf<String>()
 
-        if (pageMatches.isNotEmpty()) {
-            for (pm in pageMatches) {
-                val pageDict = pm.value
-                val contentsIds = extractContentsIds(pageDict)
-                val pageBuilder = StringBuilder()
-
-                for (cId in contentsIds) {
-                    val streamObj = streamObjs[cId]
-                    if (streamObj != null) {
-                        val uncompressed = decompressStream(streamObj)
-                        val text = extractTextFromPdfContentStream(uncompressed)
-                        if (text.isNotBlank()) {
-                            if (pageBuilder.isNotEmpty()) pageBuilder.append(" ")
-                            pageBuilder.append(text)
-                        }
+        for (dict in pageDicts) {
+            val contentIds = extractContentsIds(dict)
+            val pageSb = StringBuilder()
+            for (id in contentIds) {
+                val streamObj = streamObjects[id] ?: continue
+                val decompressed = decompressStream(streamObj)
+                val text = extractTextFromPdfContentStream(decompressed)
+                if (text.isNotBlank()) {
+                    if (pageSb.isNotEmpty() && !pageSb.endsWith(" ")) {
+                        pageSb.append(" ")
                     }
+                    pageSb.append(text)
                 }
-                pagesText.add(cleanExtractedText(pageBuilder.toString()))
             }
+            pagesText.add(cleanExtractedText(pageSb.toString()))
         }
 
-        // If page matches found fewer pages than expected or was empty,
-        // fallback to decompressing all streams sequentially
         if (pagesText.isEmpty() || pagesText.all { it.isBlank() }) {
             val allStreamTexts = mutableListOf<String>()
-            for (streamObj in streamObjs.values) {
-                val uncompressed = decompressStream(streamObj)
-                val text = extractTextFromPdfContentStream(uncompressed)
+            for ((_, obj) in streamObjects) {
+                val decompressed = decompressStream(obj)
+                val text = extractTextFromPdfContentStream(decompressed)
                 if (text.isNotBlank()) {
                     allStreamTexts.add(cleanExtractedText(text))
                 }
             }
-
             if (allStreamTexts.isNotEmpty()) {
-                if (expectedPages > 0 && allStreamTexts.size >= expectedPages) {
-                    return allStreamTexts.take(expectedPages)
-                }
                 return allStreamTexts
             }
         }
@@ -217,6 +254,7 @@ object PdfTextExtractor {
 
     /**
      * Extracts text from decompressed PDF content stream operators (BT ... ET, Tj, TJ, ', ")
+     * CRITICAL: Preserves whole words by NOT inserting spurious spaces between consecutive glyphs or operators.
      */
     fun extractTextFromPdfContentStream(streamBytes: ByteArray): String {
         val content = String(streamBytes, Charsets.ISO_8859_1)
@@ -225,41 +263,44 @@ object PdfTextExtractor {
         // Match all BT ... ET blocks
         val btEtRegex = Regex("""BT\s+(.*?)\s+ET""", RegexOption.DOT_MATCHES_ALL)
         val btBlocks = btEtRegex.findAll(content).map { it.groupValues[1] }.toList()
-
         val blocks = if (btBlocks.isNotEmpty()) btBlocks else listOf(content)
 
         for (block in blocks) {
             var i = 0
             var inArray = false
+
             while (i < block.length) {
                 val ch = block[i]
+
                 if (ch == '[') {
                     inArray = true
                     i++
                     continue
                 } else if (ch == ']') {
                     inArray = false
-                    if (sb.isNotEmpty() && !sb.endsWith(" ")) {
-                        sb.append(" ")
-                    }
                     i++
                     continue
                 }
 
+                // Check for line break operators in PDF (T*, ', ", Td with delta y != 0)
+                if (!inArray && (ch == '\'' || ch == '"')) {
+                    if (sb.isNotEmpty() && !sb.endsWith(" ")) {
+                        sb.append(" ")
+                    }
+                }
+
                 if (ch == '(') {
-                    // Literal string in parentheses
+                    // Literal string in parentheses: (Hello World)
                     val strBuilder = StringBuilder()
                     i++
                     var parenDepth = 1
                     var escaped = false
+
                     while (i < block.length && parenDepth > 0) {
                         val c = block[i]
                         if (escaped) {
                             when (c) {
-                                'n' -> strBuilder.append(' ')
-                                'r' -> strBuilder.append(' ')
-                                't' -> strBuilder.append(' ')
-                                'b', 'f' -> {}
+                                'n', 'r', 't' -> strBuilder.append(' ')
                                 '\\' -> strBuilder.append('\\')
                                 '(' -> strBuilder.append('(')
                                 ')' -> strBuilder.append(')')
@@ -294,44 +335,33 @@ object PdfTextExtractor {
                         }
                         i++
                     }
-                    val extracted = strBuilder.toString()
-                    if (extracted.isNotBlank()) {
-                        if (extracted.startsWith(" ") && sb.isNotEmpty() && !sb.endsWith(" ")) {
-                            sb.append(" ")
-                        }
-                        sb.append(extracted.trim())
-                        if (extracted.endsWith(" ") || !inArray) {
-                            if (sb.isNotEmpty() && !sb.endsWith(" ")) {
-                                sb.append(" ")
-                            }
-                        }
+
+                    val literal = strBuilder.toString()
+                    if (literal.isNotEmpty()) {
+                        // Keep words together: if literal starts with space or ends with space, respect it
+                        sb.append(literal)
                     }
+                    continue
                 } else if (ch == '<' && i + 1 < block.length && block[i + 1] != '<') {
-                    // Hex string <...>
+                    // Hex string <00480065006C006C006F>
                     val hexBuilder = StringBuilder()
                     i++
                     while (i < block.length && block[i] != '>') {
-                        if (block[i].isLetterOrDigit()) {
-                            hexBuilder.append(block[i])
+                        val c = block[i]
+                        if ((c in '0'..'9') || (c in 'a'..'f') || (c in 'A'..'F')) {
+                            hexBuilder.append(c)
                         }
                         i++
                     }
                     if (i < block.length && block[i] == '>') i++
-                    val hexStr = hexBuilder.toString()
-                    val decoded = decodeHexString(hexStr)
-                    if (decoded.isNotBlank()) {
-                        if (decoded.startsWith(" ") && sb.isNotEmpty() && !sb.endsWith(" ")) {
-                            sb.append(" ")
-                        }
-                        sb.append(decoded.trim())
-                        if (decoded.endsWith(" ") || !inArray) {
-                            if (sb.isNotEmpty() && !sb.endsWith(" ")) {
-                                sb.append(" ")
-                            }
-                        }
+
+                    val decoded = decodeHexString(hexBuilder.toString())
+                    if (decoded.isNotEmpty()) {
+                        sb.append(decoded)
                     }
-                } else if (inArray && (ch == '-' || ch == '+') && i + 2 < block.length && block[i + 1].isDigit()) {
-                    // Check for kerning offset in TJ array: negative spacing indicates word break
+                    continue
+                } else if (inArray && (ch == '-' || ch == '+' || ch.isDigit())) {
+                    // TJ array kerning adjustment: only significant negative values represent actual space
                     var numStr = "$ch"
                     var k = i + 1
                     while (k < block.length && (block[k].isDigit() || block[k] == '.')) {
@@ -339,15 +369,26 @@ object PdfTextExtractor {
                         k++
                     }
                     val spacing = numStr.toFloatOrNull() ?: 0f
+                    // In PDF standard, standard word space is about -200 to -350 units.
+                    // Negative spacing <= -150 indicates an intentional inter-word space.
                     if (spacing <= -150f && sb.isNotEmpty() && !sb.endsWith(" ")) {
                         sb.append(" ")
                     }
                     i = k
                     continue
                 } else {
+                    // Check for T* or Tj operators
+                    if (ch == 'T' && i + 1 < block.length && block[i + 1] == '*') {
+                        if (sb.isNotEmpty() && !sb.endsWith(" ")) {
+                            sb.append(" ")
+                        }
+                        i += 2
+                        continue
+                    }
                     i++
                 }
             }
+
             if (sb.isNotEmpty() && !sb.endsWith(" ")) {
                 sb.append(" ")
             }
@@ -361,7 +402,6 @@ object PdfTextExtractor {
             val cleanHex = if (hex.length % 2 != 0) hex + "0" else hex
             val sb = StringBuilder()
             var j = 0
-            // Check for UTF-16BE (starts with FEFF or 4 hex digits per char)
             if (cleanHex.startsWith("FEFF", ignoreCase = true) || (cleanHex.length >= 4 && cleanHex.startsWith("00"))) {
                 while (j + 3 < cleanHex.length) {
                     val code = cleanHex.substring(j, j + 4).toIntOrNull(16) ?: 0
@@ -392,7 +432,10 @@ object PdfTextExtractor {
         return -1
     }
 
-    private fun cleanExtractedText(text: String): String {
-        return text.replace(Regex("""\s+"""), " ").trim()
+    fun cleanExtractedText(text: String): String {
+        return text.replace(Regex("""[^\S\r\n]+"""), " ")
+            .replace(Regex("""\n+"""), " ")
+            .replace(Regex("""\s+"""), " ")
+            .trim()
     }
 }
