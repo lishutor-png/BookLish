@@ -4,8 +4,11 @@ import android.content.Context
 import android.net.Uri
 import android.util.Log
 import com.example.data.model.BookEntity
+import com.example.data.model.PdfLinkItem
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.pdmodel.PDDocument
+import com.tom_roush.pdfbox.pdmodel.interactive.action.PDActionURI
+import com.tom_roush.pdfbox.pdmodel.interactive.annotation.PDAnnotationLink
 import com.tom_roush.pdfbox.text.PDFTextStripper
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -437,5 +440,112 @@ object PdfTextExtractor {
             .replace(Regex("""\n+"""), " ")
             .replace(Regex("""\s+"""), " ")
             .trim()
+    }
+
+    /**
+     * Extracts all hyperlinks from the PDF document:
+     * 1. Interactive link annotations (PDAnnotationLink) with PDActionURI.
+     * 2. Plain-text URLs matched from the extracted text of each page.
+     */
+    fun extractDocumentLinks(
+        context: Context,
+        book: BookEntity,
+        totalPages: Int,
+        pageTexts: List<String>
+    ): Map<Int, List<PdfLinkItem>> {
+        val linksByPage = mutableMapOf<Int, MutableList<PdfLinkItem>>()
+
+        // 1. Extract formal PDF link annotations via PDFBox
+        try {
+            initPdfBox(context)
+            val file = if (book.localFilePath.isNotBlank()) File(book.localFilePath) else null
+            val document: PDDocument? = when {
+                file != null && file.exists() -> PDDocument.load(file)
+                book.fileUri.isNotBlank() -> {
+                    context.contentResolver.openInputStream(Uri.parse(book.fileUri))?.use {
+                        PDDocument.load(it)
+                    }
+                }
+                else -> null
+            }
+
+            if (document != null) {
+                val numPages = document.numberOfPages
+                for (p in 0 until numPages) {
+                    try {
+                        val pdPage = document.getPage(p)
+                        val annotations = pdPage.annotations ?: emptyList()
+                        val pw = pdPage.mediaBox.width.coerceAtLeast(1f)
+                        val ph = pdPage.mediaBox.height.coerceAtLeast(1f)
+                        val pageList = linksByPage.getOrPut(p) { mutableListOf() }
+
+                        for (annot in annotations) {
+                            if (annot is PDAnnotationLink) {
+                                val action = annot.action
+                                val uri = if (action is PDActionURI) action.uri else null
+                                if (!uri.isNullOrBlank()) {
+                                    val cleanUri = uri.trim()
+                                    val rect = annot.rectangle
+                                    val normLeft = if (rect != null) (rect.lowerLeftX / pw).coerceIn(0f, 1f) else 0f
+                                    val normRight = if (rect != null) (rect.upperRightX / pw).coerceIn(0f, 1f) else 1f
+                                    val normTop = if (rect != null) ((ph - rect.upperRightY) / ph).coerceIn(0f, 1f) else 0f
+                                    val normBottom = if (rect != null) ((ph - rect.lowerLeftY) / ph).coerceIn(0f, 1f) else 1f
+
+                                    // Avoid duplicates
+                                    if (pageList.none { it.url.equals(cleanUri, ignoreCase = true) }) {
+                                        pageList.add(
+                                            PdfLinkItem(
+                                                id = "annot_link_${p}_${pageList.size}_${cleanUri.hashCode()}",
+                                                url = cleanUri,
+                                                displayText = cleanUri,
+                                                pageIndex = p,
+                                                normalizedLeft = normLeft,
+                                                normalizedTop = normTop,
+                                                normalizedRight = normRight,
+                                                normalizedBottom = normBottom,
+                                                hasExactBounds = rect != null && rect.width > 0 && rect.height > 0
+                                            )
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    } catch (ePage: Exception) {
+                        Log.w(TAG, "Error reading annotations on page $p", ePage)
+                    }
+                }
+                document.close()
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "Failed PDFBox link annotation extraction for ${book.title}", e)
+        }
+
+        // 2. Scan extracted page texts for plain-text URLs (e.g. https://... or www....)
+        val urlRegex = Regex("""(?i)\b(?:https?://|www\.)[a-z0-9+&@#/%?=~_|!:,.;-]*[a-z0-9+&@#/%=~_|-]""")
+        for ((pageIdx, text) in pageTexts.withIndex()) {
+            if (text.isBlank()) continue
+            val pageList = linksByPage.getOrPut(pageIdx) { mutableListOf() }
+            val existingUrls = pageList.map { it.url.lowercase().trim() }.toSet()
+
+            val matches = urlRegex.findAll(text)
+            for (m in matches) {
+                val foundUrl = m.value.trim().trimEnd('.', ',', ';', ':', ')', ']', '}')
+                if (foundUrl.length <= 4) continue
+                val normalizedUrl = if (foundUrl.startsWith("www.", ignoreCase = true)) "https://$foundUrl" else foundUrl
+                if (!existingUrls.contains(foundUrl.lowercase()) && !existingUrls.contains(normalizedUrl.lowercase())) {
+                    pageList.add(
+                        PdfLinkItem(
+                            id = "text_link_${pageIdx}_${pageList.size}_${foundUrl.hashCode()}",
+                            url = normalizedUrl,
+                            displayText = foundUrl,
+                            pageIndex = pageIdx,
+                            hasExactBounds = false
+                        )
+                    )
+                }
+            }
+        }
+
+        return linksByPage.filterValues { it.isNotEmpty() }
     }
 }

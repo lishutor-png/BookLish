@@ -95,3 +95,15 @@ data class DrawingStroke(
     val alpha: Float = if (isHighlighter) 0.35f else 1.0f
 )
 
+data class PdfLinkItem(
+    val id: String,
+    val url: String,
+    val displayText: String = url,
+    val pageIndex: Int,
+    val normalizedLeft: Float = 0f,
+    val normalizedTop: Float = 0f,
+    val normalizedRight: Float = 0f,
+    val normalizedBottom: Float = 0f,
+    val hasExactBounds: Boolean = false
+)
+

@@ -16,7 +16,7 @@ import com.example.data.model.StudySummaryEntity
         AnnotationEntity::class,
         StudySummaryEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {

@@ -4,11 +4,10 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import androidx.activity.ComponentActivity
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.lifecycle.ViewModelProvider
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -26,16 +25,24 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.ui.screens.HomeScreen
 import com.example.ui.screens.ReaderScreen
+import com.example.ui.screens.VaultScreen
 import com.example.ui.theme.MyApplicationTheme
+import com.example.ui.util.BiometricHelper
 import com.example.ui.viewmodel.ReaderViewModel
+import kotlinx.coroutines.launch
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
 
   private val readerViewModel: ReaderViewModel by lazy {
     ViewModelProvider(this)[ReaderViewModel::class.java]
@@ -49,7 +56,10 @@ class MainActivity : ComponentActivity() {
 
     setContent {
       MyApplicationTheme {
-        BookLishApp(viewModel = readerViewModel)
+        BookLishApp(
+          activity = this,
+          viewModel = readerViewModel
+        )
       }
     }
   }
@@ -58,6 +68,16 @@ class MainActivity : ComponentActivity() {
     super.onNewIntent(intent)
     setIntent(intent)
     handleIncomingIntent(intent)
+  }
+
+  override fun onPause() {
+    super.onPause()
+    readerViewModel.saveCurrentReadingProgress()
+  }
+
+  override fun onStop() {
+    super.onStop()
+    readerViewModel.saveCurrentReadingProgress()
   }
 
   private fun handleIncomingIntent(intent: Intent?) {
@@ -84,10 +104,39 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun BookLishApp(viewModel: ReaderViewModel = viewModel()) {
+fun BookLishApp(
+  activity: FragmentActivity,
+  viewModel: ReaderViewModel = viewModel()
+) {
   val books by viewModel.allBooks.collectAsState()
+  val vaultBooks by viewModel.vaultBooks.collectAsState()
   val uiState by viewModel.uiState.collectAsState()
   val snackbarHostState = remember { SnackbarHostState() }
+  val coroutineScope = rememberCoroutineScope()
+
+  var showEmulatorFallbackDialog by remember { mutableStateOf(false) }
+
+  val triggerBiometricAuthentication = {
+    if (BiometricHelper.canAuthenticate(activity)) {
+      BiometricHelper.authenticate(
+        activity = activity,
+        title = "Verifikasi Sidik Jari",
+        subtitle = "Pindai sidik jari Anda untuk membuka tab tersembunyi",
+        onSuccess = {
+          viewModel.unlockVault()
+        },
+        onError = { errorMsg ->
+          coroutineScope.launch {
+            snackbarHostState.showSnackbar(errorMsg)
+          }
+        }
+      )
+    } else {
+      // Hardware biometric or lock screen is not enrolled (e.g. streaming emulator)
+      // Provide clean fallback so the user can still test & unlock
+      showEmulatorFallbackDialog = true
+    }
+  }
 
   LaunchedEffect(uiState.errorMessage) {
     uiState.errorMessage?.let { error ->
@@ -105,33 +154,52 @@ fun BookLishApp(viewModel: ReaderViewModel = viewModel()) {
         .padding(innerPadding)
     ) {
       AnimatedContent(
-        targetState = uiState.currentBook,
+        targetState = when {
+          uiState.currentBook != null -> "READER"
+          uiState.isVaultUnlocked -> "VAULT"
+          else -> "HOME"
+        },
         transitionSpec = {
-          if (targetState != null) {
+          if (targetState == "READER") {
+            slideInHorizontally { it } + fadeIn() togetherWith slideOutHorizontally { -it } + fadeOut()
+          } else if (targetState == "VAULT") {
             slideInHorizontally { it } + fadeIn() togetherWith slideOutHorizontally { -it } + fadeOut()
           } else {
             slideInHorizontally { -it } + fadeIn() togetherWith slideOutHorizontally { it } + fadeOut()
           }
         },
         label = "book_navigation_transition"
-      ) { targetBook ->
-        if (targetBook != null) {
-          BackHandler {
-            viewModel.closeReader()
-          }
+      ) { screenState ->
+        when (screenState) {
+          "READER" -> {
+            BackHandler {
+              viewModel.closeReader()
+            }
 
-          ReaderScreen(
-            viewModel = viewModel,
-            uiState = uiState,
-            onBackToLibrary = { viewModel.closeReader() }
-          )
-        } else {
-          HomeScreen(
-            books = books,
-            onOpenBook = { book -> viewModel.openBook(book) },
-            onImportUri = { uri -> viewModel.importBookFromUri(uri) },
-            onDeleteBook = { book -> viewModel.deleteBook(book) }
-          )
+            ReaderScreen(
+              viewModel = viewModel,
+              uiState = uiState,
+              onBackToLibrary = { viewModel.closeReader() }
+            )
+          }
+          "VAULT" -> {
+            VaultScreen(
+              vaultBooks = vaultBooks,
+              onOpenBook = { book -> viewModel.openBook(book) },
+              onImportUri = { uri -> viewModel.importBookFromUri(uri, isVault = true) },
+              onDeleteBook = { book -> viewModel.deleteBook(book) },
+              onQuickExit = { viewModel.quickExitVault() }
+            )
+          }
+          else -> {
+            HomeScreen(
+              books = books,
+              onOpenBook = { book -> viewModel.openBook(book) },
+              onImportUri = { uri -> viewModel.importBookFromUri(uri, isVault = false) },
+              onDeleteBook = { book -> viewModel.deleteBook(book) },
+              onTriggerVaultUnlock = { triggerBiometricAuthentication() }
+            )
+          }
         }
       }
 
@@ -144,5 +212,40 @@ fun BookLishApp(viewModel: ReaderViewModel = viewModel()) {
         }
       }
     }
+  }
+
+  // Fallback dialog when running on devices/emulators without enrolled biometric hardware
+  if (showEmulatorFallbackDialog) {
+    androidx.compose.material3.AlertDialog(
+      onDismissRequest = { showEmulatorFallbackDialog = false },
+      title = {
+        androidx.compose.material3.Text(
+          text = "Verifikasi Sidik Jari",
+          fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+        )
+      },
+      text = {
+        androidx.compose.material3.Text(
+          text = "Perangkat/emulator ini belum mendaftarkan sidik jari fisik. Konfirmasi untuk membuka Tab Tersembunyi:"
+        )
+      },
+      confirmButton = {
+        androidx.compose.material3.Button(
+          onClick = {
+            showEmulatorFallbackDialog = false
+            viewModel.unlockVault()
+          }
+        ) {
+          androidx.compose.material3.Text("Buka Tab Tersembunyi")
+        }
+      },
+      dismissButton = {
+        androidx.compose.material3.TextButton(
+          onClick = { showEmulatorFallbackDialog = false }
+        ) {
+          androidx.compose.material3.Text("Batal")
+        }
+      }
+    )
   }
 }

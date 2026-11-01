@@ -14,9 +14,12 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -48,6 +51,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import com.example.data.model.*
 import com.example.ui.components.*
 import com.example.ui.viewmodel.ReaderUiState
@@ -56,6 +60,7 @@ import com.example.ui.viewmodel.SearchResult
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -118,37 +123,94 @@ fun ReaderScreen(
         livePoints.clear()
     }
 
+    var showResumeToast by remember(book.id) { mutableStateOf(book.currentPage > 0) }
+    LaunchedEffect(book.id) {
+        if (book.currentPage > 0) {
+            delay(3200L)
+            showResumeToast = false
+        }
+    }
+
     Box(
         modifier = modifier
             .fillMaxSize()
             .background(Color(theme.backgroundColor))
             .testTag("reader_screen")
     ) {
+        // Melanjutkan membaca dari halaman terakhir banner
+        AnimatedVisibility(
+            visible = showResumeToast && !uiState.isBookLoading,
+            enter = fadeIn() + slideInVertically { -it },
+            exit = fadeOut() + slideOutVertically { -it },
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 68.dp)
+                .zIndex(20f)
+        ) {
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary,
+                shadowElevation = 6.dp
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Bookmark,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Melanjutkan membaca dari Halaman ${book.currentPage + 1}",
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold)
+                    )
+                }
+            }
+        }
+
         // =========================================================================
         // MODE 1: CONTINUOUS VERTICAL SCROLL (GULIR VERTIKAL ATAS-BAWAH MULUS)
         // =========================================================================
         if (viewMode == ReaderViewMode.CONTINUOUS_VERTICAL && uiState.activeTool == ActiveDrawingTool.NONE) {
-            val lazyListState = rememberLazyListState(
-                initialFirstVisibleItemIndex = uiState.currentPageIndex.coerceIn(
-                    0,
-                    (uiState.totalPages - 1).coerceAtLeast(0)
-                )
-            )
+            val initialSavedPage = remember(book.id) {
+                book.currentPage.coerceIn(0, (uiState.totalPages - 1).coerceAtLeast(0))
+            }
+            val lazyListState = remember(book.id) {
+                LazyListState(firstVisibleItemIndex = initialSavedPage)
+            }
+            var hasRestoredScrollPosition by remember(book.id) { mutableStateOf(false) }
 
-            // Sync visible page as user scrolls vertically
+            // Restore last read page when book finishes loading
+            LaunchedEffect(book.id, uiState.isBookLoading) {
+                if (!uiState.isBookLoading && !hasRestoredScrollPosition) {
+                    val target = book.currentPage.coerceIn(0, (uiState.totalPages - 1).coerceAtLeast(0))
+                    if (target > 0) {
+                        lazyListState.scrollToItem(target)
+                    }
+                    hasRestoredScrollPosition = true
+                }
+            }
+
+            // Sync visible page as user scrolls vertically (guarded so initial page is preserved)
             LaunchedEffect(lazyListState, uiState.totalPages) {
                 snapshotFlow {
-                    val layoutInfo = lazyListState.layoutInfo
-                    val visibleItems = layoutInfo.visibleItemsInfo
-                    if (visibleItems.isEmpty()) {
-                        lazyListState.firstVisibleItemIndex
-                    } else {
-                        val viewportCenter = (layoutInfo.viewportStartOffset + layoutInfo.viewportEndOffset) / 2
-                        visibleItems.minByOrNull { item ->
-                            abs((item.offset + item.size / 2) - viewportCenter)
-                        }?.index ?: lazyListState.firstVisibleItemIndex
-                    }
+                    if (!uiState.isBookLoading && hasRestoredScrollPosition) {
+                        val layoutInfo = lazyListState.layoutInfo
+                        val visibleItems = layoutInfo.visibleItemsInfo
+                        if (visibleItems.isEmpty()) {
+                            lazyListState.firstVisibleItemIndex
+                        } else {
+                            val viewportCenter = (layoutInfo.viewportStartOffset + layoutInfo.viewportEndOffset) / 2
+                            visibleItems.minByOrNull { item ->
+                                abs((item.offset + item.size / 2) - viewportCenter)
+                            }?.index ?: lazyListState.firstVisibleItemIndex
+                        }
+                    } else null
                 }
+                    .filterNotNull()
                     .distinctUntilChanged()
                     .collect { visiblePage ->
                         viewModel.syncVisiblePageInContinuousMode(visiblePage)
@@ -157,9 +219,11 @@ fun ReaderScreen(
 
             // Scroll to page if user jumped via Slider, TOC, Search, or Bookmark
             LaunchedEffect(uiState.currentPageIndex) {
-                val visibleIndices = lazyListState.layoutInfo.visibleItemsInfo.map { it.index }
-                if (uiState.currentPageIndex !in visibleIndices) {
-                    lazyListState.scrollToItem(uiState.currentPageIndex)
+                if (!uiState.isBookLoading && hasRestoredScrollPosition) {
+                    val visibleIndices = lazyListState.layoutInfo.visibleItemsInfo.map { it.index }
+                    if (uiState.currentPageIndex !in visibleIndices) {
+                        lazyListState.scrollToItem(uiState.currentPageIndex)
+                    }
                 }
             }
 
@@ -294,8 +358,10 @@ fun ReaderScreen(
                             searchQuery = uiState.searchQuery,
                             searchHighlightBoxes = uiState.searchHighlightBoxes[pageIdx] ?: emptyList(),
                             pageSearchResults = pageMatches,
+                            pageLinks = uiState.documentLinks[pageIdx] ?: emptyList(),
                             isCurrentSearchMatchPage = isCurrentMatchPage,
                             activeMatchSnippet = if (isCurrentMatchPage) activeResult?.snippet else null,
+                            onOpenLink = { link -> viewModel.setActiveLinkForDialog(link) },
                             onAnnotateThisPage = {
                                 viewModel.goToPage(pageIdx)
                                 viewModel.setActiveTool(ActiveDrawingTool.PEN)
@@ -652,6 +718,74 @@ fun ReaderScreen(
                     }
                 }
 
+                // Current Page Web Links floating pill in Single Page Mode
+                val singlePageLinks = uiState.documentLinks[uiState.currentPageIndex] ?: emptyList()
+                if (singlePageLinks.isNotEmpty() && uiState.activeTool == ActiveDrawingTool.NONE) {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
+                        shadowElevation = 4.dp,
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .padding(top = 10.dp, start = 14.dp, end = 14.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Language,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Tautan:",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Row(
+                                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                for (link in singlePageLinks) {
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
+                                        modifier = Modifier.clickable { viewModel.setActiveLinkForDialog(link) }
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                        ) {
+                                            Text(
+                                                text = link.displayText.take(28) + (if (link.displayText.length > 28) "…" else ""),
+                                                style = MaterialTheme.typography.labelSmall.copy(
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = MaterialTheme.colorScheme.primary
+                                                )
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Icon(
+                                                Icons.Default.OpenInNew,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(12.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // PDF Page Rendering Spinner Indicator (Only shown on initial cold load)
                 if (uiState.isRenderingPdfPage && uiState.activePagePdfBitmap == null) {
                     Box(
@@ -804,6 +938,39 @@ fun ReaderScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
+                            // Quick Exit button if reading a vault document
+                            if (book.isVault || uiState.isVaultUnlocked) {
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier
+                                        .clickable { viewModel.quickExitVault() }
+                                        .padding(end = 4.dp)
+                                        .testTag("reader_vault_quick_exit_button")
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Default.ExitToApp,
+                                            contentDescription = "Keluar Cepat",
+                                            tint = MaterialTheme.colorScheme.onError,
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = "Keluar Cepat",
+                                            style = MaterialTheme.typography.labelSmall.copy(
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 11.sp
+                                            ),
+                                            color = MaterialTheme.colorScheme.onError
+                                        )
+                                    }
+                                }
+                            }
+
                             // 1-Tap Toggle between Horizontal Page Swipe & Continuous Vertical Scroll
                             Surface(
                                 shape = RoundedCornerShape(10.dp),
@@ -848,6 +1015,35 @@ fun ReaderScreen(
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.size(20.dp)
                                 )
+                            }
+
+                            // Document Links (Buka di browser luar HP)
+                            val totalLinksCount = uiState.documentLinks.values.sumOf { it.size }
+                            IconButton(
+                                onClick = { viewModel.setLinksSheetOpen(true) },
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .testTag("document_links_button")
+                            ) {
+                                BadgedBox(
+                                    badge = {
+                                        if (totalLinksCount > 0) {
+                                            Badge(
+                                                containerColor = MaterialTheme.colorScheme.primary,
+                                                contentColor = MaterialTheme.colorScheme.onPrimary
+                                            ) {
+                                                Text("$totalLinksCount", fontSize = 9.sp)
+                                            }
+                                        }
+                                    }
+                                ) {
+                                    Icon(
+                                        Icons.Default.Language,
+                                        contentDescription = "Tautan Dokumen",
+                                        tint = if (totalLinksCount > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
                             }
 
                             // Table of Contents
@@ -1421,6 +1617,22 @@ fun ReaderScreen(
                 onDismiss = { viewModel.setClearPageDialogOpen(false) }
             )
         }
+
+        if (uiState.isLinksSheetOpen) {
+            DocumentLinksSheet(
+                currentPageIndex = uiState.currentPageIndex,
+                allLinks = uiState.documentLinks,
+                onSelectPage = { pageIdx -> viewModel.goToPage(pageIdx) },
+                onDismiss = { viewModel.setLinksSheetOpen(false) }
+            )
+        }
+
+        uiState.activeLinkForDialog?.let { link ->
+            OpenLinkDialog(
+                link = link,
+                onDismiss = { viewModel.setActiveLinkForDialog(null) }
+            )
+        }
     }
 }
 
@@ -1438,8 +1650,10 @@ private fun ContinuousPdfPageCard(
     searchQuery: String = "",
     searchHighlightBoxes: List<com.example.data.parser.SearchHighlightBox> = emptyList(),
     pageSearchResults: List<SearchResult> = emptyList(),
+    pageLinks: List<PdfLinkItem> = emptyList(),
     isCurrentSearchMatchPage: Boolean = false,
     activeMatchSnippet: String? = null,
+    onOpenLink: (PdfLinkItem) -> Unit = {},
     onAnnotateThisPage: () -> Unit
 ) {
     var pageBitmap by remember(pageIndex, theme) {
@@ -1571,6 +1785,58 @@ private fun ContinuousPdfPageCard(
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis
                         )
+                    }
+                }
+            }
+
+            // Web Links on this page (buka di browser HP)
+            if (pageLinks.isNotEmpty()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 2.dp)
+                        .horizontalScroll(rememberScrollState())
+                        .testTag("continuous_page_links_banner_$pageIndex"),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    for (link in pageLinks) {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
+                            modifier = Modifier
+                                .clickable { onOpenLink(link) }
+                                .testTag("in_page_link_chip_${link.url}")
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.Language,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(12.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = link.displayText.take(30) + (if (link.displayText.length > 30) "…" else ""),
+                                    style = MaterialTheme.typography.bodySmall.copy(
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Icon(
+                                    Icons.Default.OpenInNew,
+                                    contentDescription = "Buka di Browser",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(11.dp)
+                                )
+                            }
+                        }
                     }
                 }
             }

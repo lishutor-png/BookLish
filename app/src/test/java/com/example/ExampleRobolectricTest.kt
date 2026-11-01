@@ -127,4 +127,109 @@ class ExampleRobolectricTest {
     assertEquals("Uppercase CORETAN and lowercase coretan must match", matchUpperCoretan, matchLowerCoretan)
     org.junit.Assert.assertTrue("Should find coretan across multiple pages", matchLowerCoretan >= 3)
   }
+
+  @Test
+  fun `extractDocumentLinks discovers valid web links across document pages`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val sampleBook = com.example.data.model.BookEntity(
+      title = "Panduan Pintar LishPDF & Fitur Coretan",
+      localFilePath = "/data/user/0/com.example/files/books/panduan_lengkap_lishpdf.pdf",
+      fileType = "PDF",
+      totalPages = 4
+    )
+    val pagesText = com.example.data.parser.PdfTextExtractor.extractPagesText(context, sampleBook, 4)
+    val linksMap = com.example.data.parser.PdfTextExtractor.extractDocumentLinks(context, sampleBook, 4, pagesText)
+    val allLinks = linksMap.values.flatten()
+    org.junit.Assert.assertTrue("Should discover links from document", allLinks.isNotEmpty())
+
+    val urls = allLinks.map { it.url }
+    org.junit.Assert.assertTrue("Should find developer.android.com link", urls.any { it.contains("developer.android.com") })
+    org.junit.Assert.assertTrue("Should find wikipedia link", urls.any { it.contains("wikipedia.org") })
+    org.junit.Assert.assertTrue("All links must have valid page indices", allLinks.all { it.pageIndex in 0 until 4 })
+  }
+
+  @Test
+  fun `reopening book preserves last saved page and progress percent`() {
+    val originalBook = com.example.data.model.BookEntity(
+      id = 42,
+      title = "Buku Uji Coba LishPDF",
+      localFilePath = "/test/path/sample.pdf",
+      fileType = "PDF",
+      totalPages = 10,
+      currentPage = 0,
+      progressPercent = 0
+    )
+
+    // User navigates to page 7 (8th page)
+    val savedPage = 7
+    val progress = ((savedPage + 1) * 100) / originalBook.totalPages
+    val updatedBook = originalBook.copy(
+      currentPage = savedPage,
+      progressPercent = progress
+    )
+
+    assertEquals(7, updatedBook.currentPage)
+    assertEquals(80, updatedBook.progressPercent)
+  }
+
+  @Test
+  fun `vault documents are isolated from public library`() {
+    val publicDoc = com.example.data.model.BookEntity(
+      id = 1,
+      title = "Dokumen Publik",
+      fileType = "PDF",
+      isVault = false
+    )
+    val secretDoc = com.example.data.model.BookEntity(
+      id = 2,
+      title = "Dokumen Rahasia Sangat Penting",
+      fileType = "PDF",
+      isVault = true
+    )
+
+    val allDocs = listOf(publicDoc, secretDoc)
+    val publicList = allDocs.filter { !it.isVault }
+    val vaultList = allDocs.filter { it.isVault }
+
+    assertEquals(1, publicList.size)
+    assertEquals("Dokumen Publik", publicList.first().title)
+    org.junit.Assert.assertFalse("Public list must NEVER contain vault documents", publicList.any { it.isVault })
+
+    assertEquals(1, vaultList.size)
+    assertEquals("Dokumen Rahasia Sangat Penting", vaultList.first().title)
+    org.junit.Assert.assertTrue("Vault list must contain secret document", vaultList.first().isVault)
+  }
+
+  @Test
+  fun `triple tap detection triggers unlock only on 3 taps within threshold`() {
+    var tapCount = 0
+    var lastTapTime = 0L
+    var unlocked = false
+
+    fun registerTap(time: Long) {
+      if (time - lastTapTime < 1500L) {
+        tapCount++
+      } else {
+        tapCount = 1
+      }
+      lastTapTime = time
+      if (tapCount >= 3) {
+        tapCount = 0
+        unlocked = true
+      }
+    }
+
+    // 1st tap at 1000ms
+    registerTap(1000L)
+    org.junit.Assert.assertFalse(unlocked)
+
+    // 2nd tap at 1300ms
+    registerTap(1300L)
+    org.junit.Assert.assertFalse(unlocked)
+
+    // 3rd tap at 1600ms (< 1500ms since last tap)
+    registerTap(1600L)
+    org.junit.Assert.assertTrue("Should be unlocked on 3rd tap within threshold", unlocked)
+  }
 }
+

@@ -40,11 +40,16 @@ fun HomeScreen(
     onOpenBook: (BookEntity) -> Unit,
     onImportUri: (Uri) -> Unit,
     onDeleteBook: (BookEntity) -> Unit,
+    onTriggerVaultUnlock: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var searchQuery by remember { mutableStateOf("") }
     var selectedFilter by remember { mutableStateOf("ALL") } // ALL, READING, COMPLETED
     var bookToDelete by remember { mutableStateOf<BookEntity?>(null) }
+
+    // Triple-tap tracker on the logo to trigger hidden tab (zero visual information)
+    var logoTapCount by remember { mutableIntStateOf(0) }
+    var lastLogoTapTime by remember { mutableLongStateOf(0L) }
 
     // File picker for PDF documents
     val filePickerLauncher = rememberLauncherForActivityResult(
@@ -84,48 +89,57 @@ fun HomeScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .statusBarsPadding()
-                        .height(64.dp)
+                        .height(60.dp)
                         .padding(horizontal = 16.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    // Logo & Brand Name (LishPDF White & Red Flat)
+                    // Logo & Brand Name (Zero visual indication for secret triple-tap)
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier
+                            .clickable(
+                                interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                                indication = null
+                            ) {
+                                val now = System.currentTimeMillis()
+                                if (now - lastLogoTapTime < 1500L) {
+                                    logoTapCount++
+                                } else {
+                                    logoTapCount = 1
+                                }
+                                lastLogoTapTime = now
+                                if (logoTapCount >= 3) {
+                                    logoTapCount = 0
+                                    onTriggerVaultUnlock()
+                                }
+                            }
+                            .testTag("app_logo_brand_container")
                     ) {
                         Surface(
-                            modifier = Modifier.size(38.dp),
+                            modifier = Modifier.size(36.dp),
                             shape = RoundedCornerShape(10.dp),
                             color = MaterialTheme.colorScheme.primary,
-                            shadowElevation = 3.dp
+                            shadowElevation = 2.dp
                         ) {
                             Box(contentAlignment = Alignment.Center) {
                                 Icon(
                                     imageVector = Icons.Default.PictureAsPdf,
                                     contentDescription = "LishPDF Logo",
                                     tint = MaterialTheme.colorScheme.onPrimary,
-                                    modifier = Modifier.size(22.dp)
+                                    modifier = Modifier.size(20.dp)
                                 )
                             }
                         }
-                        Column {
-                            Text(
-                                text = "LishPDF",
-                                style = MaterialTheme.typography.titleLarge.copy(
-                                    fontWeight = FontWeight.Bold,
-                                    letterSpacing = (-0.2).sp
-                                ),
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                            Text(
-                                text = "Pembaca & Coretan PDF Pintar",
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    letterSpacing = 0.4.sp
-                                ),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
+                        Text(
+                            text = "LishPDF",
+                            style = MaterialTheme.typography.titleLarge.copy(
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = (-0.3).sp
+                            ),
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
                     }
 
                     // Import PDF Button
@@ -144,10 +158,10 @@ fun HomeScreen(
                             contentColor = MaterialTheme.colorScheme.onPrimary
                         ),
                         shape = RoundedCornerShape(12.dp),
-                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 7.dp),
                         modifier = Modifier.testTag("import_file_button")
                     ) {
-                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(17.dp))
                         Spacer(modifier = Modifier.width(6.dp))
                         Text("Buka PDF", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
                     }
@@ -160,108 +174,10 @@ fun HomeScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
                 .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             item {
                 Spacer(modifier = Modifier.height(2.dp))
-            }
-
-            // Hero Feature Banner - Clean White & Red Minimalism
-            item {
-                Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("hero_banner_card"),
-                    shape = RoundedCornerShape(20.dp),
-                    color = MaterialTheme.colorScheme.surface,
-                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                    shadowElevation = 1.dp
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(18.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.Top
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "Membaca & Coretan Presisi",
-                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = "Buka berkas PDF, tulis catatan dengan Bolpoin & Stabilo, dan gunakan gestur 2 jari untuk zoom & geser kanvas bebas.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Surface(
-                                shape = RoundedCornerShape(12.dp),
-                                color = MaterialTheme.colorScheme.primaryContainer,
-                                modifier = Modifier.size(42.dp)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        Icons.Default.Draw,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(24.dp)
-                                    )
-                                }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(14.dp))
-
-                        // Gestur & Fitur Badges
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            // 2-Finger Gesture Badge
-                            Surface(
-                                shape = RoundedCornerShape(50),
-                                color = MaterialTheme.colorScheme.primaryContainer,
-                                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f))
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
-                                ) {
-                                    Icon(
-                                        Icons.Default.Pinch,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(14.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = "Gestur 2 Jari (Zoom/Pan)",
-                                        style = MaterialTheme.typography.labelSmall.copy(
-                                            fontWeight = FontWeight.SemiBold,
-                                            letterSpacing = 0.2.sp
-                                        ),
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                }
-                            }
-
-                            // Quick Feature indicators
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                MinimalBadge(icon = Icons.Default.FolderOpen, label = "File Manager")
-                                MinimalBadge(icon = Icons.Default.Edit, label = "Bolpoin")
-                                MinimalBadge(icon = Icons.Default.Brush, label = "Stabilo")
-                            }
-                        }
-                    }
-                }
             }
 
             // Search Bar & Filter Chips

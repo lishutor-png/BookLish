@@ -13,6 +13,7 @@ class BookRepository(private val database: AppDatabase) {
     private val summaryDao = database.summaryDao()
 
     val allBooks: Flow<List<BookEntity>> = bookDao.getAllBooks()
+    val vaultBooks: Flow<List<BookEntity>> = bookDao.getVaultBooks()
 
     suspend fun getBookById(id: Long): BookEntity? = bookDao.getBookById(id)
 

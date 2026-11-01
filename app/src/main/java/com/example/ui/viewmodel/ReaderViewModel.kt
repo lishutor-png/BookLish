@@ -78,13 +78,18 @@ data class ReaderUiState(
     val isBookmarksSheetOpen: Boolean = false,
     val isSearchSheetOpen: Boolean = false,
     val isAddBookmarkDialogOpen: Boolean = false,
-    val isClearPageDialogOpen: Boolean = false
+    val isClearPageDialogOpen: Boolean = false,
+    val isLinksSheetOpen: Boolean = false,
+    val activeLinkForDialog: PdfLinkItem? = null,
+    val documentLinks: Map<Int, List<PdfLinkItem>> = emptyMap(),
+    val isVaultUnlocked: Boolean = false
 )
 
 class ReaderViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository: BookRepository
     val allBooks: StateFlow<List<BookEntity>>
+    val vaultBooks: StateFlow<List<BookEntity>>
     private val pdfHelper = PdfDocumentHelper(application)
 
     private val _uiState = MutableStateFlow(ReaderUiState())
@@ -111,6 +116,12 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             initialValue = emptyList()
         )
 
+        vaultBooks = repository.vaultBooks.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
         // Initialize sample PDF documents if database is empty on first run
         viewModelScope.launch {
             try {
@@ -130,11 +141,26 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         extractedDocumentPages = emptyList()
         clearSearch()
         viewModelScope.launch {
-            _uiState.update { it.copy(isBookLoading = true, errorMessage = null, currentBook = book) }
+            // Fetch the freshest record from Room to ensure the latest saved page is restored
+            val freshBook = repository.getBookById(book.id) ?: book
+            val savedPage = freshBook.currentPage.coerceAtLeast(0)
+
+            _uiState.update {
+                it.copy(
+                    isBookLoading = true,
+                    errorMessage = null,
+                    currentBook = freshBook,
+                    currentPageIndex = savedPage,
+                    totalPages = freshBook.totalPages.coerceAtLeast(1),
+                    documentLinks = emptyMap(),
+                    isLinksSheetOpen = false,
+                    activeLinkForDialog = null
+                )
+            }
             try {
-                loadPdfBook(book)
+                loadPdfBook(freshBook)
             } catch (e: Exception) {
-                Log.e("ReaderViewModel", "Error loading PDF ${book.title}", e)
+                Log.e("ReaderViewModel", "Error loading PDF ${freshBook.title}", e)
                 _uiState.update {
                     it.copy(
                         isBookLoading = false,
@@ -161,7 +187,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         }
 
         val totalPages = pdfHelper.pageCount
-        val initialPage = book.currentPage.coerceIn(0, totalPages - 1)
+        val initialPage = book.currentPage.coerceIn(0, (totalPages - 1).coerceAtLeast(0))
 
         _uiState.update {
             it.copy(
@@ -176,23 +202,34 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         renderCurrentPdfPage(initialPage)
         loadAnnotationsForCurrentPage(book.id, initialPage)
 
-        // Asynchronously extract and cache all text across document pages for instantaneous full-document search
+        // Asynchronously extract and cache all text across document pages and extract hyperlinks
         viewModelScope.launch(Dispatchers.IO) {
             val samplePages = SamplePdfProvider.getSampleBookPagesText(book)
             if (!samplePages.isNullOrEmpty()) {
                 extractedDocumentPages = samplePages
-                return@launch
+            } else {
+                val nativePages = pdfHelper.extractAllPagesText()
+                if (!nativePages.isNullOrEmpty() && nativePages.any { it.isNotBlank() }) {
+                    extractedDocumentPages = nativePages
+                } else {
+                    extractedDocumentPages = PdfTextExtractor.extractPagesText(
+                        context = getApplication(),
+                        book = book,
+                        totalPages = totalPages
+                    )
+                }
             }
-            val nativePages = pdfHelper.extractAllPagesText()
-            if (!nativePages.isNullOrEmpty() && nativePages.any { it.isNotBlank() }) {
-                extractedDocumentPages = nativePages
-                return@launch
-            }
-            extractedDocumentPages = PdfTextExtractor.extractPagesText(
+
+            // Extract all web links and PDF annotations
+            val links = PdfTextExtractor.extractDocumentLinks(
                 context = getApplication(),
                 book = book,
-                totalPages = totalPages
+                totalPages = totalPages,
+                pageTexts = extractedDocumentPages
             )
+            withContext(Dispatchers.Main) {
+                _uiState.update { it.copy(documentLinks = links) }
+            }
         }
     }
 
@@ -327,10 +364,23 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     // ----------------------------------------------------
 
     fun openFromExternalUri(uri: Uri) {
-        importBookFromUri(uri)
+        importBookFromUri(uri, isVault = false)
     }
 
-    fun importBookFromUri(uri: Uri) {
+    fun unlockVault() {
+        _uiState.update { it.copy(isVaultUnlocked = true) }
+    }
+
+    fun lockVault() {
+        _uiState.update { it.copy(isVaultUnlocked = false) }
+    }
+
+    fun quickExitVault() {
+        closeReader()
+        _uiState.update { it.copy(isVaultUnlocked = false) }
+    }
+
+    fun importBookFromUri(uri: Uri, isVault: Boolean = false) {
         viewModelScope.launch(Dispatchers.IO) {
             _uiState.update { it.copy(isBookLoading = true, errorMessage = null) }
             try {
@@ -366,8 +416,9 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 val fileName = if (rawName.endsWith(".pdf", ignoreCase = true)) rawName else "$rawName.pdf"
                 val title = fileName.substringBeforeLast(".")
 
-                // Check if book already exists in library to avoid duplicate copies and preserve user drawings/bookmarks
-                val existingBook = allBooks.value.firstOrNull { book ->
+                // Check if book already exists in library to avoid duplicate copies
+                val booksPool = if (isVault) vaultBooks.value else allBooks.value
+                val existingBook = booksPool.firstOrNull { book ->
                     (book.fileUri == uri.toString() || book.title.equals(title, ignoreCase = true)) &&
                     book.localFilePath.isNotBlank() && File(book.localFilePath).exists()
                 }
@@ -379,9 +430,10 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                     return@launch
                 }
 
-                // Copy to app internal storage for 100% offline access
+                // Copy to app internal storage
                 val cleanBaseName = fileName.replace(Regex("[^a-zA-Z0-9_.-]"), "_")
-                val booksDir = File(context.filesDir, "books").apply { if (!exists()) mkdirs() }
+                val dirName = if (isVault) "vault_books" else "books"
+                val booksDir = File(context.filesDir, dirName).apply { if (!exists()) mkdirs() }
                 val targetFile = File(booksDir, "${System.currentTimeMillis()}_$cleanBaseName")
 
                 val inputStream = when (uri.scheme) {
@@ -399,7 +451,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                     }
                 }
 
-                val author = "Dokumen Saya"
+                val author = if (isVault) "Dokumen Rahasia" else "Dokumen Saya"
                 var totalPages = 1
 
                 try {
@@ -426,7 +478,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                     progressPercent = 0,
                     coverColorHex = coverColor,
                     isSample = false,
-                    fileSizeFormatted = "${(targetFile.length() / 1024).coerceAtLeast(1)} KB"
+                    fileSizeFormatted = "${(targetFile.length() / 1024).coerceAtLeast(1)} KB",
+                    isVault = isVault
                 )
 
                 val newId = repository.insertBook(newBook)
@@ -943,19 +996,47 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         _uiState.update { it.copy(isClearPageDialogOpen = open) }
     }
 
+    fun setLinksSheetOpen(open: Boolean) {
+        _uiState.update { it.copy(isLinksSheetOpen = open) }
+    }
+
+    fun setActiveLinkForDialog(link: PdfLinkItem?) {
+        _uiState.update { it.copy(activeLinkForDialog = link) }
+    }
+
+    /**
+     * Persists the current reading page and progress percentage to Room database immediately.
+     */
+    fun saveCurrentReadingProgress() {
+        val book = _uiState.value.currentBook ?: return
+        val currentPage = _uiState.value.currentPageIndex
+        val total = _uiState.value.totalPages
+        if (total > 0) {
+            val progress = ((currentPage + 1).toFloat() / total * 100).toInt()
+            viewModelScope.launch(Dispatchers.IO) {
+                repository.updateProgress(book.id, currentPage, progress)
+            }
+        }
+    }
+
     fun closeReader() {
+        saveCurrentReadingProgress()
         pdfHelper.close()
         _uiState.update {
             it.copy(
                 currentBook = null,
                 activePagePdfBitmap = null,
-                activeTool = ActiveDrawingTool.NONE
+                activeTool = ActiveDrawingTool.NONE,
+                documentLinks = emptyMap(),
+                isLinksSheetOpen = false,
+                activeLinkForDialog = null
             )
         }
     }
 
     override fun onCleared() {
         super.onCleared()
+        saveCurrentReadingProgress()
         pdfHelper.close()
     }
 }

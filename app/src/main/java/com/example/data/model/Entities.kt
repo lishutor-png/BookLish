@@ -18,7 +18,8 @@ data class BookEntity(
     val lastReadTimestamp: Long = System.currentTimeMillis(),
     val coverColorHex: String = "#1E293B",
     val isSample: Boolean = false,
-    val fileSizeFormatted: String = ""
+    val fileSizeFormatted: String = "",
+    val isVault: Boolean = false
 )
 
 @Entity(tableName = "bookmarks")
