@@ -34,7 +34,8 @@ data class SearchResult(
     val snippet: String,
     val matchWord: String,
     val characterOffset: Int,
-    val normalizedTopFraction: Float = 0.5f
+    val normalizedTopFraction: Float = 0.5f,
+    val matchIndexInPage: Int = -1
 )
 
 data class ReaderUiState(
@@ -71,6 +72,7 @@ data class ReaderUiState(
     val searchResults: List<SearchResult> = emptyList(),
     val currentSearchResultIndex: Int = -1,
     val searchHighlightBoxes: Map<Int, List<com.example.data.parser.SearchHighlightBox>> = emptyMap(),
+    val searchNavigationTrigger: Long = 0L,
 
     // Sheets & Dialogs
     val isSettingsSheetOpen: Boolean = false,
@@ -822,7 +824,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                     }
                 }
 
-                for ((foundIndex, matchLen) in pageMatchIndices) {
+                for ((localMatchIdx, pair) in pageMatchIndices.withIndex()) {
+                    val (foundIndex, matchLen) = pair
                     val snippetStart = (foundIndex - 35).coerceAtLeast(0)
                     val snippetEnd = (foundIndex + matchLen + 45).coerceAtMost(pageText.length)
                     val rawSnippet = pageText.substring(snippetStart, snippetEnd).trim()
@@ -840,7 +843,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                             snippet = formattedSnippet,
                             matchWord = query,
                             characterOffset = foundIndex,
-                            normalizedTopFraction = topFraction
+                            normalizedTopFraction = topFraction,
+                            matchIndexInPage = localMatchIdx
                         )
                     )
                 }
@@ -879,7 +883,9 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
 
-        // 4. Retrieve exact bounding boxes for highlight rendering if supported (Android 35+)
+        // 4. Retrieve exact bounding boxes for highlight rendering across ALL Android versions:
+        // Use native PdfRenderer.Page.searchText on API 35+, and PDFBox TextPosition geometry
+        // on API 24-34 (and as fallback for any page where native searchText found no boxes).
         val highlightBoxesMap = mutableMapOf<Int, List<SearchHighlightBox>>()
         val distinctPagesWithMatches = results.map { it.pageOrChapterIndex }.distinct()
         for (pageIdx in distinctPagesWithMatches) {
@@ -889,27 +895,54 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
 
+        val pagesNeedingPdfBox = distinctPagesWithMatches.filter { !highlightBoxesMap.containsKey(it) }
+        if (pagesNeedingPdfBox.isNotEmpty() && currentBook != null) {
+            val pdfBoxHighlights = PdfTextExtractor.extractSearchHighlightsForPages(
+                context = getApplication(),
+                book = currentBook,
+                pageIndices = pagesNeedingPdfBox,
+                query = query
+            )
+            highlightBoxesMap.putAll(pdfBoxHighlights)
+        }
+
+        // Refine normalizedTopFraction from actual extracted box coordinates when available
+        val refinedResults = results.map { res ->
+            val pageBoxes = highlightBoxesMap[res.pageOrChapterIndex]
+            if (!pageBoxes.isNullOrEmpty() && res.matchIndexInPage >= 0) {
+                val matchingBox = pageBoxes.firstOrNull { it.matchIndexInPage == res.matchIndexInPage }
+                    ?: pageBoxes.getOrNull(res.matchIndexInPage)
+                if (matchingBox != null) {
+                    val centerY = ((matchingBox.normalizedTop + matchingBox.normalizedBottom) / 2f).coerceIn(0f, 1f)
+                    return@map res.copy(normalizedTopFraction = centerY)
+                }
+            }
+            res
+        }
+
         withContext(Dispatchers.Main) {
             _uiState.update {
                 it.copy(
                     isSearching = false,
-                    searchResults = results,
-                    currentSearchResultIndex = if (results.isNotEmpty()) 0 else -1,
-                    searchHighlightBoxes = highlightBoxesMap
+                    searchResults = refinedResults,
+                    currentSearchResultIndex = if (refinedResults.isNotEmpty()) 0 else -1,
+                    searchHighlightBoxes = highlightBoxesMap,
+                    searchNavigationTrigger = if (refinedResults.isNotEmpty()) it.searchNavigationTrigger + 1L else it.searchNavigationTrigger
                 )
             }
         }
     }
 
     fun jumpToSearchResult(result: SearchResult) {
-        goToPage(result.pageOrChapterIndex)
         val idx = _uiState.value.searchResults.indexOf(result)
         _uiState.update {
             it.copy(
                 currentSearchResultIndex = if (idx >= 0) idx else 0,
-                isSearchSheetOpen = false
+                isSearchSheetOpen = false,
+                searchNavigationTrigger = it.searchNavigationTrigger + 1L
             )
         }
+        goToPage(result.pageOrChapterIndex)
     }
 
     fun nextSearchResult() {
@@ -918,8 +951,13 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         val currentIdx = _uiState.value.currentSearchResultIndex
         val nextIdx = (currentIdx + 1) % results.size
         val result = results[nextIdx]
+        _uiState.update {
+            it.copy(
+                currentSearchResultIndex = nextIdx,
+                searchNavigationTrigger = it.searchNavigationTrigger + 1L
+            )
+        }
         goToPage(result.pageOrChapterIndex)
-        _uiState.update { it.copy(currentSearchResultIndex = nextIdx) }
     }
 
     fun previousSearchResult() {
@@ -928,8 +966,13 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         val currentIdx = _uiState.value.currentSearchResultIndex
         val prevIdx = if (currentIdx <= 0) results.size - 1 else currentIdx - 1
         val result = results[prevIdx]
+        _uiState.update {
+            it.copy(
+                currentSearchResultIndex = prevIdx,
+                searchNavigationTrigger = it.searchNavigationTrigger + 1L
+            )
+        }
         goToPage(result.pageOrChapterIndex)
-        _uiState.update { it.copy(currentSearchResultIndex = prevIdx) }
     }
 
     fun clearSearch() {

@@ -7,9 +7,11 @@ import com.example.data.model.BookEntity
 import com.example.data.model.PdfLinkItem
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.pdmodel.PDDocument
+import com.tom_roush.pdfbox.pdmodel.PDPage
 import com.tom_roush.pdfbox.pdmodel.interactive.action.PDActionURI
 import com.tom_roush.pdfbox.pdmodel.interactive.annotation.PDAnnotationLink
 import com.tom_roush.pdfbox.text.PDFTextStripper
+import com.tom_roush.pdfbox.text.TextPosition
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -547,5 +549,326 @@ object PdfTextExtractor {
         }
 
         return linksByPage.filterValues { it.isNotEmpty() }
+    }
+
+    /**
+     * Extracts exact normalized [0..1] bounding boxes for all search matches on the specified pages
+     * using PDFBox TextPosition geometry, accounting for CropBox, page rotation, and font ascent/descent.
+     */
+    fun extractSearchHighlightsForPages(
+        context: Context,
+        book: BookEntity,
+        pageIndices: List<Int>,
+        query: String
+    ): Map<Int, List<SearchHighlightBox>> {
+        val trimmed = query.trim()
+        if (trimmed.isEmpty() || pageIndices.isEmpty()) return emptyMap()
+
+        var document: PDDocument? = null
+        return try {
+            initPdfBox(context)
+            val file = if (book.localFilePath.isNotBlank()) File(book.localFilePath) else null
+            document = when {
+                file != null && file.exists() -> PDDocument.load(file)
+                book.fileUri.isNotBlank() -> {
+                    context.contentResolver.openInputStream(Uri.parse(book.fileUri))?.use {
+                        PDDocument.load(it)
+                    }
+                }
+                else -> null
+            }
+
+            if (document != null) {
+                extractSearchHighlightsFromDocument(document, pageIndices, trimmed)
+            } else {
+                emptyMap()
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "Failed PDFBox search highlight extraction for ${book.title}", e)
+            emptyMap()
+        } finally {
+            try {
+                document?.close()
+            } catch (_: Exception) {}
+        }
+    }
+
+    /**
+     * Extracts exact normalized [0..1] bounding boxes from an already-loaded PDDocument.
+     */
+    fun extractSearchHighlightsFromDocument(
+        document: PDDocument,
+        pageIndices: List<Int>,
+        query: String
+    ): Map<Int, List<SearchHighlightBox>> {
+        val trimmed = query.trim()
+        if (trimmed.isEmpty() || pageIndices.isEmpty()) return emptyMap()
+
+        val result = mutableMapOf<Int, List<SearchHighlightBox>>()
+        val numPages = document.numberOfPages
+
+        val flexibleRegex = try {
+            if (trimmed.length > 1) {
+                val escapedLetters = trimmed.map { Regex.escape(it.toString()) }
+                Regex(escapedLetters.joinToString("""[\s\u00A0]*"""), RegexOption.IGNORE_CASE)
+            } else {
+                null
+            }
+        } catch (_: Exception) {
+            null
+        }
+
+        for (pageIdx in pageIndices.distinct()) {
+            if (pageIdx < 0 || pageIdx >= numPages) continue
+            try {
+                val boxes = extractPageHighlights(document, pageIdx, trimmed, flexibleRegex)
+                if (boxes.isNotEmpty()) {
+                    result[pageIdx] = boxes
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed extracting highlights on page $pageIdx", e)
+            }
+        }
+        return result
+    }
+
+    private fun extractPageHighlights(
+        document: PDDocument,
+        pageIndex: Int,
+        query: String,
+        flexibleRegex: Regex?
+    ): List<SearchHighlightBox> {
+        val pdPage: PDPage = document.getPage(pageIndex)
+        val mediaBox = pdPage.mediaBox
+        val cropBox = pdPage.cropBox ?: mediaBox
+        val rotation = ((pdPage.rotation % 360) + 360) % 360
+
+        val textBuilder = StringBuilder()
+        val charPositions = mutableListOf<TextPosition?>()
+
+        val stripper = object : PDFTextStripper() {
+            init {
+                sortByPosition = true
+                startPage = pageIndex + 1
+                endPage = pageIndex + 1
+            }
+
+            override fun writeString(text: String, textPositions: MutableList<TextPosition>) {
+                for (tp in textPositions) {
+                    val u = tp.unicode ?: ""
+                    if (u.isEmpty()) continue
+                    for (ch in u) {
+                        if (ch == '\u00A0' || ch.isWhitespace()) {
+                            if (textBuilder.isNotEmpty() && textBuilder.last() != ' ') {
+                                textBuilder.append(' ')
+                                charPositions.add(null)
+                            }
+                        } else {
+                            textBuilder.append(ch)
+                            charPositions.add(tp)
+                        }
+                    }
+                }
+            }
+
+            override fun writeWordSeparator() {
+                if (textBuilder.isNotEmpty() && textBuilder.last() != ' ') {
+                    textBuilder.append(' ')
+                    charPositions.add(null)
+                }
+            }
+
+            override fun writeLineSeparator() {
+                if (textBuilder.isNotEmpty() && textBuilder.last() != ' ') {
+                    textBuilder.append(' ')
+                    charPositions.add(null)
+                }
+            }
+        }
+
+        stripper.getText(document)
+        val pageStr = textBuilder.toString()
+        if (pageStr.isEmpty()) return emptyList()
+
+        // Find matches using the exact same matching order as ReaderViewModel.performSearch
+        val matchRanges = mutableListOf<IntRange>()
+        var startIdx = 0
+        while (startIdx < pageStr.length) {
+            val found = pageStr.indexOf(query, startIdx, ignoreCase = true)
+            if (found == -1) break
+            matchRanges.add(found until (found + query.length))
+            startIdx = found + maxOf(1, query.length)
+        }
+
+        if (matchRanges.isEmpty() && flexibleRegex != null) {
+            for (m in flexibleRegex.findAll(pageStr)) {
+                matchRanges.add(m.range)
+            }
+        }
+
+        if (matchRanges.isEmpty()) return emptyList()
+
+        // PDFBox LegacyPDFStreamEngine already transforms TextPosition.getXDirAdj() and getYDirAdj()
+        // into rotated CropBox top-left display space (0..dispW x 0..dispH), matching PdfRenderer!
+        val dispW: Float = if (rotation == 90 || rotation == 270) {
+            cropBox.height.coerceAtLeast(1f)
+        } else {
+            cropBox.width.coerceAtLeast(1f)
+        }
+        val dispH: Float = if (rotation == 90 || rotation == 270) {
+            cropBox.width.coerceAtLeast(1f)
+        } else {
+            cropBox.height.coerceAtLeast(1f)
+        }
+
+        val boxes = mutableListOf<SearchHighlightBox>()
+
+        for ((matchIdx, range) in matchRanges.withIndex()) {
+            val tps = mutableListOf<TextPosition>()
+            for (idx in range) {
+                if (idx in charPositions.indices) {
+                    val tp = charPositions[idx]
+                    if (tp != null) tps.add(tp)
+                }
+            }
+            if (tps.isEmpty()) continue
+
+            fun resolveDisplayDirection(tp: TextPosition): Int {
+                val tm = tp.textMatrix
+                val ux = tm?.scaleX ?: 1f
+                val uy = tm?.shearY ?: 0f
+                val dispDx: Float
+                val dispDy: Float
+                when (rotation) {
+                    90 -> {
+                        dispDx = uy
+                        dispDy = ux
+                    }
+                    180 -> {
+                        dispDx = -ux
+                        dispDy = uy
+                    }
+                    270 -> {
+                        dispDx = -uy
+                        dispDy = -ux
+                    }
+                    else -> {
+                        dispDx = ux
+                        dispDy = -uy
+                    }
+                }
+                return if (kotlin.math.abs(dispDx) >= kotlin.math.abs(dispDy)) {
+                    if (dispDx >= 0f) 0 else 180
+                } else {
+                    if (dispDy >= 0f) 90 else 270
+                }
+            }
+
+            // Group TextPositions by visual line along their reading axis so multi-line matches produce tight boxes per line
+            val lineGroups = mutableListOf<MutableList<TextPosition>>()
+            var currentGroup = mutableListOf(tps.first())
+            lineGroups.add(currentGroup)
+
+            for (k in 1 until tps.size) {
+                val prev = currentGroup.last()
+                val curr = tps[k]
+                val prevDir = resolveDisplayDirection(prev)
+                val currDir = resolveDisplayDirection(curr)
+                val lineTol = maxOf(prev.heightDir, curr.heightDir, prev.fontSizeInPt * 0.5f, 4f)
+                val baselineDiff = when (currDir) {
+                    90, 270 -> kotlin.math.abs(curr.x - prev.x)
+                    else -> kotlin.math.abs(curr.y - prev.y)
+                }
+                if (prevDir == currDir && baselineDiff <= lineTol) {
+                    currentGroup.add(curr)
+                } else {
+                    currentGroup = mutableListOf(curr)
+                    lineGroups.add(currentGroup)
+                }
+            }
+
+            for (group in lineGroups) {
+                var minX = Float.MAX_VALUE
+                var maxX = -Float.MAX_VALUE
+                var minY = Float.MAX_VALUE
+                var maxY = -Float.MAX_VALUE
+
+                for (tp in group) {
+                    val bx = tp.x
+                    val by = tp.y
+                    val adv = tp.widthDirAdj.coerceAtLeast(0f)
+                    val dir = resolveDisplayDirection(tp)
+
+                    // Derive true ascent above baseline and descent below baseline from font descriptor when available
+                    val descriptor = try { tp.font?.fontDescriptor } catch (_: Exception) { null }
+                    val effectivePt = tp.fontSizeInPt.takeIf { it > 0.5f } ?: (tp.heightDir * 1.4f)
+                    val ascentPt = if (descriptor != null && descriptor.ascent > 0f) {
+                        (descriptor.ascent / 1000f) * effectivePt
+                    } else {
+                        maxOf(tp.heightDir * 1.55f, effectivePt * 0.78f)
+                    }
+                    val descentPt = if (descriptor != null && descriptor.descent < 0f) {
+                        (kotlin.math.abs(descriptor.descent) / 1000f) * effectivePt
+                    } else {
+                        maxOf(tp.heightDir * 0.42f, effectivePt * 0.22f)
+                    }
+
+                    val glyphLeft: Float
+                    val glyphRight: Float
+                    val glyphTop: Float
+                    val glyphBottom: Float
+
+                    when (dir) {
+                        90 -> {
+                            // Text advances downward (+Y), ascent is toward +X, descent is toward -X
+                            glyphLeft = bx - descentPt
+                            glyphRight = bx + ascentPt
+                            glyphTop = by
+                            glyphBottom = by + adv
+                        }
+                        180 -> {
+                            // Text advances leftward (-X), ascent is toward +Y, descent is toward -Y
+                            glyphLeft = bx - adv
+                            glyphRight = bx
+                            glyphTop = by - descentPt
+                            glyphBottom = by + ascentPt
+                        }
+                        270 -> {
+                            // Text advances upward (-Y), ascent is toward -X, descent is toward +X
+                            glyphLeft = bx - ascentPt
+                            glyphRight = bx + descentPt
+                            glyphTop = by - adv
+                            glyphBottom = by
+                        }
+                        else -> {
+                            // Standard horizontal left-to-right (+X), ascent is toward -Y, descent is toward +Y
+                            glyphLeft = bx
+                            glyphRight = bx + adv
+                            glyphTop = by - ascentPt
+                            glyphBottom = by + descentPt
+                        }
+                    }
+
+                    if (glyphLeft < minX) minX = glyphLeft
+                    if (glyphRight > maxX) maxX = glyphRight
+                    if (glyphTop < minY) minY = glyphTop
+                    if (glyphBottom > maxY) maxY = glyphBottom
+                }
+
+                if (minX < maxX && minY < maxY) {
+                    boxes.add(
+                        SearchHighlightBox(
+                            normalizedLeft = (minX / dispW).coerceIn(0f, 1f),
+                            normalizedTop = (minY / dispH).coerceIn(0f, 1f),
+                            normalizedRight = (maxX / dispW).coerceIn(0f, 1f),
+                            normalizedBottom = (maxY / dispH).coerceIn(0f, 1f),
+                            matchIndexInPage = matchIdx
+                        )
+                    )
+                }
+            }
+        }
+
+        return boxes
     }
 }

@@ -21,7 +21,8 @@ data class SearchHighlightBox(
     val normalizedLeft: Float,
     val normalizedTop: Float,
     val normalizedRight: Float,
-    val normalizedBottom: Float
+    val normalizedBottom: Float,
+    val matchIndexInPage: Int = -1
 )
 
 class PdfDocumentHelper(private val context: Context) {
@@ -240,14 +241,19 @@ class PdfDocumentHelper(private val context: Context) {
                     val ph = page.height.toFloat().coerceAtLeast(1f)
                     val list = mutableListOf<SearchHighlightBox>()
                     val matches = page.searchText(trimmed)
-                    for (m in matches) {
+                    for ((matchIdx, m) in matches.withIndex()) {
                         for (b in m.bounds) {
+                            val left = minOf(b.left, b.right)
+                            val right = maxOf(b.left, b.right)
+                            val top = minOf(b.top, b.bottom)
+                            val bottom = maxOf(b.top, b.bottom)
                             list.add(
                                 SearchHighlightBox(
-                                    normalizedLeft = (b.left / pw).coerceIn(0f, 1f),
-                                    normalizedTop = (b.top / ph).coerceIn(0f, 1f),
-                                    normalizedRight = (b.right / pw).coerceIn(0f, 1f),
-                                    normalizedBottom = (b.bottom / ph).coerceIn(0f, 1f)
+                                    normalizedLeft = (left / pw).coerceIn(0f, 1f),
+                                    normalizedTop = (top / ph).coerceIn(0f, 1f),
+                                    normalizedRight = (right / pw).coerceIn(0f, 1f),
+                                    normalizedBottom = (bottom / ph).coerceIn(0f, 1f),
+                                    matchIndexInPage = matchIdx
                                 )
                             )
                         }

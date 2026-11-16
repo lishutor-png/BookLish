@@ -82,6 +82,125 @@ fun clampPanOffset(rawOffset: Offset, currentScale: Float, containerSize: IntSiz
     )
 }
 
+/**
+ * Computes the exact rendered page dimensions inside a container using ContentScale.Fit logic,
+ * ensuring that the highlight Canvas has identical origin and pixel bounds as the PDF Image.
+ */
+fun computeFittedPageSize(
+    containerWidth: Float,
+    containerHeight: Float,
+    bitmapWidth: Float,
+    bitmapHeight: Float
+): Size {
+    if (containerWidth <= 0f || containerHeight <= 0f || bitmapWidth <= 0f || bitmapHeight <= 0f) {
+        return Size(containerWidth.coerceAtLeast(0f), containerHeight.coerceAtLeast(0f))
+    }
+    val containerAspect = containerWidth / containerHeight
+    val bitmapAspect = (bitmapWidth / bitmapHeight).coerceAtLeast(0.05f)
+    return if (containerAspect > bitmapAspect) {
+        Size(width = containerHeight * bitmapAspect, height = containerHeight)
+    } else {
+        Size(width = containerWidth, height = containerWidth / bitmapAspect)
+    }
+}
+
+/**
+ * Computes clamped pan offset needed to center a normalized [0..1] point on a centered page
+ * inside the zoomed viewport (TransformOrigin.Center).
+ */
+fun computePanOffsetForNormalizedPoint(
+    normX: Float,
+    normY: Float,
+    pageWidth: Float,
+    pageHeight: Float,
+    containerSize: IntSize,
+    scale: Float
+): Offset {
+    if (scale <= 1.01f) return Offset.Zero
+    val dx = (normX.coerceIn(0f, 1f) - 0.5f) * pageWidth
+    val dy = (normY.coerceIn(0f, 1f) - 0.5f) * pageHeight
+    return clampPanOffset(
+        rawOffset = Offset(x = -dx * scale, y = -dy * scale),
+        currentScale = scale,
+        containerSize = containerSize
+    )
+}
+
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawPdfSearchHighlights(
+    boxes: List<com.example.data.parser.SearchHighlightBox>,
+    fallbackResults: List<SearchResult>,
+    activeMatchIndexInPage: Int?,
+    activeResultId: String?
+) {
+    if (size.width <= 0f || size.height <= 0f) return
+    if (boxes.isNotEmpty()) {
+        val padX = 1.5.dp.toPx()
+        val padY = 1.dp.toPx()
+        val minSize = 4.dp.toPx()
+
+        for ((idx, box) in boxes.withIndex()) {
+            val isActiveMatch = activeMatchIndexInPage != null && (
+                box.matchIndexInPage == activeMatchIndexInPage ||
+                    (box.matchIndexInPage < 0 && idx == activeMatchIndexInPage)
+                )
+
+            val rawLeft = (minOf(box.normalizedLeft, box.normalizedRight) * size.width).coerceIn(0f, size.width)
+            val rawRight = (maxOf(box.normalizedLeft, box.normalizedRight) * size.width).coerceIn(0f, size.width)
+            val rawTop = (minOf(box.normalizedTop, box.normalizedBottom) * size.height).coerceIn(0f, size.height)
+            val rawBottom = (maxOf(box.normalizedTop, box.normalizedBottom) * size.height).coerceIn(0f, size.height)
+
+            val rawW = (rawRight - rawLeft).coerceAtLeast(0f)
+            val rawH = (rawBottom - rawTop).coerceAtLeast(0f)
+            val drawW = (rawW + padX * 2f).coerceAtLeast(minSize).coerceAtMost(size.width)
+            val drawH = (rawH + padY * 2f).coerceAtLeast(minSize).coerceAtMost(size.height)
+
+            // Expand symmetrically around the true glyph box center so text is covered cleanly without vertical/horizontal shift
+            val centerX = (rawLeft + rawRight) / 2f
+            val centerY = (rawTop + rawBottom) / 2f
+            val drawLeft = (centerX - drawW / 2f).coerceIn(0f, (size.width - drawW).coerceAtLeast(0f))
+            val drawTop = (centerY - drawH / 2f).coerceIn(0f, (size.height - drawH).coerceAtLeast(0f))
+
+            val fillColor = if (isActiveMatch) {
+                Color(0xFFFFB300).copy(alpha = 0.52f)
+            } else {
+                Color(0xFFFFEB3B).copy(alpha = 0.40f)
+            }
+            val strokeColor = if (isActiveMatch) Color(0xFFE65100) else Color(0xFFF57F17)
+            val strokeWidth = if (isActiveMatch) 2.dp.toPx() else 1.dp.toPx()
+
+            drawRect(
+                color = fillColor,
+                topLeft = Offset(drawLeft, drawTop),
+                size = Size(drawW, drawH)
+            )
+            drawRect(
+                color = strokeColor,
+                topLeft = Offset(drawLeft, drawTop),
+                size = Size(drawW, drawH),
+                style = androidx.compose.ui.graphics.drawscope.Stroke(width = strokeWidth)
+            )
+        }
+    } else {
+        for (res in fallbackResults) {
+            val isActiveMatch = activeResultId != null && res.id == activeResultId
+            val yPos = res.normalizedTopFraction * size.height
+            val barHeight = 22.dp.toPx()
+            val top = (yPos - barHeight / 2f).coerceIn(0f, (size.height - barHeight).coerceAtLeast(0f))
+            drawRect(
+                color = if (isActiveMatch) Color(0xFFFFB300).copy(alpha = 0.45f) else Color(0xFFFFEB3B).copy(alpha = 0.35f),
+                topLeft = Offset(6.dp.toPx(), top),
+                size = Size((size.width - 12.dp.toPx()).coerceAtLeast(0f), barHeight)
+            )
+            drawRect(
+                color = if (isActiveMatch) Color(0xFFE65100) else Color(0xFFFFA000).copy(alpha = 0.85f),
+                topLeft = Offset(6.dp.toPx(), top),
+                size = Size((size.width - 12.dp.toPx()).coerceAtLeast(0f), barHeight),
+                style = androidx.compose.ui.graphics.drawscope.Stroke(width = if (isActiveMatch) 1.5.dp.toPx() else 1.dp.toPx())
+            )
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ReaderScreen(
@@ -121,6 +240,45 @@ fun ReaderScreen(
         }
         swipeDragOffsetX = 0f
         livePoints.clear()
+    }
+
+    // Re-clamp pan offset whenever screen size or orientation changes
+    LaunchedEffect(containerSize) {
+        offset = clampPanOffset(offset, scale, containerSize)
+    }
+
+    // Pan directly to the active search highlight in Single Page Mode if already zoomed in
+    LaunchedEffect(uiState.searchNavigationTrigger) {
+        if (viewMode == ReaderViewMode.SINGLE_PAGE_SWIPE &&
+            uiState.searchNavigationTrigger > 0L &&
+            scale > 1.03f
+        ) {
+            val activeRes = uiState.searchResults.getOrNull(uiState.currentSearchResultIndex)
+            val bmp = uiState.activePagePdfBitmap
+            if (activeRes != null && activeRes.pageOrChapterIndex == uiState.currentPageIndex &&
+                bmp != null && !bmp.isRecycled && containerSize.width > 0 && containerSize.height > 0
+            ) {
+                val pageBoxes = uiState.searchHighlightBoxes[activeRes.pageOrChapterIndex]
+                val targetBox = pageBoxes?.firstOrNull { it.matchIndexInPage == activeRes.matchIndexInPage }
+                    ?: pageBoxes?.getOrNull(activeRes.matchIndexInPage)
+                val targetNormX = targetBox?.let { (it.normalizedLeft + it.normalizedRight) / 2f } ?: 0.5f
+                val targetNormY = targetBox?.let { (it.normalizedTop + it.normalizedBottom) / 2f } ?: activeRes.normalizedTopFraction
+                val fitted = computeFittedPageSize(
+                    containerWidth = containerSize.width.toFloat(),
+                    containerHeight = containerSize.height.toFloat(),
+                    bitmapWidth = bmp.width.toFloat(),
+                    bitmapHeight = bmp.height.toFloat()
+                )
+                offset = computePanOffsetForNormalizedPoint(
+                    normX = targetNormX,
+                    normY = targetNormY,
+                    pageWidth = fitted.width,
+                    pageHeight = fitted.height,
+                    containerSize = containerSize,
+                    scale = scale
+                )
+            }
+        }
     }
 
     var showResumeToast by remember(book.id) { mutableStateOf(book.currentPage > 0) }
@@ -223,6 +381,44 @@ fun ReaderScreen(
                     val visibleIndices = lazyListState.layoutInfo.visibleItemsInfo.map { it.index }
                     if (uiState.currentPageIndex !in visibleIndices) {
                         lazyListState.scrollToItem(uiState.currentPageIndex)
+                    }
+                }
+            }
+
+            // Scroll precisely to active search result inside target page (handles same-page jumps & tall/zoomed pages)
+            LaunchedEffect(uiState.searchNavigationTrigger, uiState.isBookLoading) {
+                if (!uiState.isBookLoading && hasRestoredScrollPosition && uiState.searchNavigationTrigger > 0L) {
+                    val activeResult = uiState.searchResults.getOrNull(uiState.currentSearchResultIndex) ?: return@LaunchedEffect
+                    val targetPage = activeResult.pageOrChapterIndex.coerceIn(0, (uiState.totalPages - 1).coerceAtLeast(0))
+                    val pageBoxes = uiState.searchHighlightBoxes[targetPage]
+                    val targetBox = pageBoxes?.firstOrNull { it.matchIndexInPage == activeResult.matchIndexInPage }
+                        ?: pageBoxes?.getOrNull(activeResult.matchIndexInPage)
+                    val targetNormX = targetBox?.let { (it.normalizedLeft + it.normalizedRight) / 2f } ?: 0.5f
+                    val targetNormY = targetBox?.let { (it.normalizedTop + it.normalizedBottom) / 2f } ?: activeResult.normalizedTopFraction
+
+                    lazyListState.scrollToItem(targetPage)
+                    withFrameNanos { }
+
+                    val itemInfo = lazyListState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == targetPage }
+                    val viewportHeight = (lazyListState.layoutInfo.viewportEndOffset - lazyListState.layoutInfo.viewportStartOffset).coerceAtLeast(1)
+                    if (itemInfo != null && itemInfo.size > 0) {
+                        val matchYInItem = (targetNormY * itemInfo.size).toInt()
+                        val desiredScrollOffset = (matchYInItem - (viewportHeight * 0.35f).toInt())
+                            .coerceIn(0, (itemInfo.size - viewportHeight / 2).coerceAtLeast(0))
+                        if (desiredScrollOffset > 0) {
+                            lazyListState.scrollToItem(targetPage, desiredScrollOffset)
+                        }
+                    }
+
+                    if (scale > 1.03f && containerSize.width > 0) {
+                        offset = computePanOffsetForNormalizedPoint(
+                            normX = targetNormX,
+                            normY = 0.5f,
+                            pageWidth = containerSize.width.toFloat(),
+                            pageHeight = containerSize.height.toFloat(),
+                            containerSize = containerSize,
+                            scale = scale
+                        )
                     }
                 }
             }
@@ -361,6 +557,8 @@ fun ReaderScreen(
                             pageLinks = uiState.documentLinks[pageIdx] ?: emptyList(),
                             isCurrentSearchMatchPage = isCurrentMatchPage,
                             activeMatchSnippet = if (isCurrentMatchPage) activeResult?.snippet else null,
+                            activeMatchIndexInPage = if (isCurrentMatchPage) activeResult?.matchIndexInPage else null,
+                            activeResultId = activeResult?.id,
                             onOpenLink = { link -> viewModel.setActiveLinkForDialog(link) },
                             onAnnotateThisPage = {
                                 viewModel.goToPage(pageIdx)
@@ -593,62 +791,52 @@ fun ReaderScreen(
                             transformOrigin = TransformOrigin.Center
                         }
                 ) {
-                    // 1. PDF Page Rendered Bitmap
-                    if (uiState.activePagePdfBitmap != null) {
-                        Image(
-                            bitmap = uiState.activePagePdfBitmap.asImageBitmap(),
-                            contentDescription = "Halaman Dokumen PDF",
+                    // 1. PDF Page Rendered Bitmap + 1:1 Fitted Search Highlight Overlay
+                    val bmp = uiState.activePagePdfBitmap
+                    if (bmp != null && !bmp.isRecycled) {
+                        BoxWithConstraints(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .padding(4.dp)
-                        )
-                    }
-
-                    // 1.5 Search Highlight Overlay for active page in Single Page Mode
-                    val activePageHighlights = uiState.searchHighlightBoxes[uiState.currentPageIndex] ?: emptyList()
-                    val activePageSearchResults = uiState.searchResults.filter { it.pageOrChapterIndex == uiState.currentPageIndex }
-                    if (activePageHighlights.isNotEmpty() || activePageSearchResults.isNotEmpty()) {
-                        androidx.compose.foundation.Canvas(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(4.dp)
+                                .padding(4.dp),
+                            contentAlignment = Alignment.Center
                         ) {
-                            if (activePageHighlights.isNotEmpty()) {
-                                for (box in activePageHighlights) {
-                                    val left = box.normalizedLeft * size.width
-                                    val top = box.normalizedTop * size.height
-                                    val right = box.normalizedRight * size.width
-                                    val bottom = box.normalizedBottom * size.height
-                                    val w = (right - left).coerceAtLeast(10.dp.toPx())
-                                    val h = (bottom - top).coerceAtLeast(14.dp.toPx())
-                                    drawRect(
-                                        color = Color(0xFFFFEB3B).copy(alpha = 0.55f),
-                                        topLeft = Offset(left, top),
-                                        size = Size(w, h)
-                                    )
-                                    drawRect(
-                                        color = Color(0xFFF57F17),
-                                        topLeft = Offset(left, top),
-                                        size = Size(w, h),
-                                        style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.5.dp.toPx())
-                                    )
-                                }
-                            } else {
-                                for (res in activePageSearchResults) {
-                                    val yPos = res.normalizedTopFraction * size.height
-                                    val barHeight = 24.dp.toPx()
-                                    val top = (yPos - barHeight / 2f).coerceIn(0f, size.height - barHeight)
-                                    drawRect(
-                                        color = Color(0xFFFFEB3B).copy(alpha = 0.40f),
-                                        topLeft = Offset(6.dp.toPx(), top),
-                                        size = Size(size.width - 12.dp.toPx(), barHeight)
-                                    )
-                                    drawRect(
-                                        color = Color(0xFFFFA000).copy(alpha = 0.85f),
-                                        topLeft = Offset(6.dp.toPx(), top),
-                                        size = Size(size.width - 12.dp.toPx(), barHeight),
-                                        style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx())
-                                    )
+                            val fittedSize = computeFittedPageSize(
+                                containerWidth = constraints.maxWidth.toFloat(),
+                                containerHeight = constraints.maxHeight.toFloat(),
+                                bitmapWidth = bmp.width.toFloat(),
+                                bitmapHeight = bmp.height.toFloat()
+                            )
+                            val density = androidx.compose.ui.platform.LocalDensity.current
+                            val fittedWidthDp = with(density) { fittedSize.width.toDp() }
+                            val fittedHeightDp = with(density) { fittedSize.height.toDp() }
+
+                            Box(
+                                modifier = Modifier.size(width = fittedWidthDp, height = fittedHeightDp)
+                            ) {
+                                Image(
+                                    bitmap = bmp.asImageBitmap(),
+                                    contentDescription = "Halaman Dokumen PDF",
+                                    contentScale = ContentScale.FillBounds,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+
+                                val activePageHighlights = uiState.searchHighlightBoxes[uiState.currentPageIndex] ?: emptyList()
+                                val activePageSearchResults = uiState.searchResults.filter { it.pageOrChapterIndex == uiState.currentPageIndex }
+                                if (activePageHighlights.isNotEmpty() || activePageSearchResults.isNotEmpty()) {
+                                    val activeResult = uiState.searchResults.getOrNull(uiState.currentSearchResultIndex)
+                                    val activeMatchIdx = if (activeResult?.pageOrChapterIndex == uiState.currentPageIndex) {
+                                        activeResult.matchIndexInPage
+                                    } else {
+                                        null
+                                    }
+                                    androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
+                                        drawPdfSearchHighlights(
+                                            boxes = activePageHighlights,
+                                            fallbackResults = activePageSearchResults,
+                                            activeMatchIndexInPage = activeMatchIdx,
+                                            activeResultId = activeResult?.id
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -1653,6 +1841,8 @@ private fun ContinuousPdfPageCard(
     pageLinks: List<PdfLinkItem> = emptyList(),
     isCurrentSearchMatchPage: Boolean = false,
     activeMatchSnippet: String? = null,
+    activeMatchIndexInPage: Int? = null,
+    activeResultId: String? = null,
     onOpenLink: (PdfLinkItem) -> Unit = {},
     onAnnotateThisPage: () -> Unit
 ) {
@@ -1844,7 +2034,7 @@ private fun ContinuousPdfPageCard(
             // Rendered PDF Page Content with In-Page Search Highlights
             val bmp = pageBitmap
             if (bmp != null && !bmp.isRecycled) {
-                val aspectRatio = (bmp.width.toFloat() / bmp.height.toFloat()).coerceIn(0.4f, 2.2f)
+                val aspectRatio = (bmp.width.toFloat() / bmp.height.toFloat()).coerceAtLeast(0.05f)
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1853,51 +2043,19 @@ private fun ContinuousPdfPageCard(
                     Image(
                         bitmap = bmp.asImageBitmap(),
                         contentDescription = "Halaman ${pageIndex + 1}",
-                        contentScale = ContentScale.FillWidth,
+                        contentScale = ContentScale.FillBounds,
                         modifier = Modifier.fillMaxSize()
                     )
 
-                    // Draw highlight rectangles/bands directly over the page
+                    // Draw highlight rectangles directly over the page matching 1:1 with PDF image bounds
                     if (searchHighlightBoxes.isNotEmpty() || pageSearchResults.isNotEmpty()) {
                         androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
-                            if (searchHighlightBoxes.isNotEmpty()) {
-                                for (box in searchHighlightBoxes) {
-                                    val left = box.normalizedLeft * size.width
-                                    val top = box.normalizedTop * size.height
-                                    val right = box.normalizedRight * size.width
-                                    val bottom = box.normalizedBottom * size.height
-                                    val w = (right - left).coerceAtLeast(10.dp.toPx())
-                                    val h = (bottom - top).coerceAtLeast(14.dp.toPx())
-                                    drawRect(
-                                        color = Color(0xFFFFEB3B).copy(alpha = 0.55f),
-                                        topLeft = Offset(left, top),
-                                        size = Size(w, h)
-                                    )
-                                    drawRect(
-                                        color = Color(0xFFF57F17),
-                                        topLeft = Offset(left, top),
-                                        size = Size(w, h),
-                                        style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.5.dp.toPx())
-                                    )
-                                }
-                            } else {
-                                for (res in pageSearchResults) {
-                                    val yPos = res.normalizedTopFraction * size.height
-                                    val barHeight = 24.dp.toPx()
-                                    val top = (yPos - barHeight / 2f).coerceIn(0f, size.height - barHeight)
-                                    drawRect(
-                                        color = Color(0xFFFFEB3B).copy(alpha = 0.40f),
-                                        topLeft = Offset(6.dp.toPx(), top),
-                                        size = Size(size.width - 12.dp.toPx(), barHeight)
-                                    )
-                                    drawRect(
-                                        color = Color(0xFFFFA000).copy(alpha = 0.85f),
-                                        topLeft = Offset(6.dp.toPx(), top),
-                                        size = Size(size.width - 12.dp.toPx(), barHeight),
-                                        style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx())
-                                    )
-                                }
-                            }
+                            drawPdfSearchHighlights(
+                                boxes = searchHighlightBoxes,
+                                fallbackResults = pageSearchResults,
+                                activeMatchIndexInPage = activeMatchIndexInPage,
+                                activeResultId = activeResultId
+                            )
                         }
                     }
                 }
