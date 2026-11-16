@@ -49,6 +49,7 @@ data class ReaderUiState(
     val currentChapterTitle: String = "",
     val activePagePdfBitmap: Bitmap? = null,
     val isRenderingPdfPage: Boolean = false,
+    val pageJumpTrigger: Long = 0L,
 
     // Controls visibility
     val isControlsVisible: Boolean = true,
@@ -235,7 +236,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun goToPage(pageIndex: Int) {
+    fun goToPage(pageIndex: Int, fromSearch: Boolean = false) {
         val total = _uiState.value.totalPages
         val targetPage = pageIndex.coerceIn(0, (total - 1).coerceAtLeast(0))
         if (targetPage == _uiState.value.currentPageIndex && _uiState.value.activePagePdfBitmap != null) {
@@ -254,7 +255,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 currentPageIndex = targetPage,
                 currentChapterTitle = "Halaman ${targetPage + 1} dari $total",
                 activePagePdfBitmap = cachedBitmap ?: it.activePagePdfBitmap,
-                isRenderingPdfPage = cachedBitmap == null && it.activePagePdfBitmap == null
+                isRenderingPdfPage = cachedBitmap == null && it.activePagePdfBitmap == null,
+                pageJumpTrigger = if (!fromSearch) it.pageJumpTrigger + 1L else it.pageJumpTrigger
             )
         }
 
@@ -942,7 +944,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 searchNavigationTrigger = it.searchNavigationTrigger + 1L
             )
         }
-        goToPage(result.pageOrChapterIndex)
+        goToPage(result.pageOrChapterIndex, fromSearch = true)
     }
 
     fun nextSearchResult() {
@@ -957,7 +959,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 searchNavigationTrigger = it.searchNavigationTrigger + 1L
             )
         }
-        goToPage(result.pageOrChapterIndex)
+        goToPage(result.pageOrChapterIndex, fromSearch = true)
     }
 
     fun previousSearchResult() {
@@ -972,7 +974,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 searchNavigationTrigger = it.searchNavigationTrigger + 1L
             )
         }
-        goToPage(result.pageOrChapterIndex)
+        goToPage(result.pageOrChapterIndex, fromSearch = true)
     }
 
     fun clearSearch() {

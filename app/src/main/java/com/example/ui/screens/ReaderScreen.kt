@@ -126,6 +126,39 @@ fun computePanOffsetForNormalizedPoint(
     )
 }
 
+data class VisiblePageSpan(
+    val index: Int,
+    val offset: Int,
+    val size: Int
+)
+
+/**
+ * Selects the page occupying the largest visible vertical span within [viewportStart, viewportEnd],
+ * breaking ties by proximity of the page center to the viewport center.
+ */
+fun resolveDominantVisiblePage(
+    visibleItems: List<VisiblePageSpan>,
+    viewportStart: Int,
+    viewportEnd: Int,
+    fallbackIndex: Int = 0
+): Int {
+    if (visibleItems.isEmpty()) return fallbackIndex
+    val viewportCenter = (viewportStart + viewportEnd) / 2
+    val best = visibleItems.maxWithOrNull(
+        compareBy<VisiblePageSpan>(
+            { item ->
+                val itemStart = item.offset
+                val itemEnd = item.offset + item.size
+                (minOf(itemEnd, viewportEnd) - maxOf(itemStart, viewportStart)).coerceAtLeast(0)
+            },
+            { item ->
+                -abs((item.offset + item.size / 2) - viewportCenter)
+            }
+        )
+    )
+    return best?.index ?: fallbackIndex
+}
+
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawPdfSearchHighlights(
     boxes: List<com.example.data.parser.SearchHighlightBox>,
     fallbackResults: List<SearchResult>,
@@ -281,9 +314,10 @@ fun ReaderScreen(
         }
     }
 
-    var showResumeToast by remember(book.id) { mutableStateOf(book.currentPage > 0) }
+    val initialResumePage = remember(book.id) { book.currentPage }
+    var showResumeToast by remember(book.id) { mutableStateOf(initialResumePage > 0) }
     LaunchedEffect(book.id) {
-        if (book.currentPage > 0) {
+        if (initialResumePage > 0) {
             delay(3200L)
             showResumeToast = false
         }
@@ -322,7 +356,7 @@ fun ReaderScreen(
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "Melanjutkan membaca dari Halaman ${book.currentPage + 1}",
+                        text = "Melanjutkan membaca dari Halaman ${initialResumePage + 1}",
                         style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold)
                     )
                 }
@@ -334,7 +368,7 @@ fun ReaderScreen(
         // =========================================================================
         if (viewMode == ReaderViewMode.CONTINUOUS_VERTICAL && uiState.activeTool == ActiveDrawingTool.NONE) {
             val initialSavedPage = remember(book.id) {
-                book.currentPage.coerceIn(0, (uiState.totalPages - 1).coerceAtLeast(0))
+                uiState.currentPageIndex.coerceIn(0, (uiState.totalPages - 1).coerceAtLeast(0))
             }
             val lazyListState = remember(book.id) {
                 LazyListState(firstVisibleItemIndex = initialSavedPage)
@@ -343,8 +377,10 @@ fun ReaderScreen(
 
             // Restore last read page when book finishes loading
             LaunchedEffect(book.id, uiState.isBookLoading) {
-                if (!uiState.isBookLoading && !hasRestoredScrollPosition) {
-                    val target = book.currentPage.coerceIn(0, (uiState.totalPages - 1).coerceAtLeast(0))
+                if (uiState.isBookLoading) {
+                    hasRestoredScrollPosition = false
+                } else if (!hasRestoredScrollPosition) {
+                    val target = currentUiState.currentPageIndex.coerceIn(0, (currentUiState.totalPages - 1).coerceAtLeast(0))
                     if (target > 0) {
                         lazyListState.scrollToItem(target)
                     }
@@ -353,19 +389,21 @@ fun ReaderScreen(
             }
 
             // Sync visible page as user scrolls vertically (guarded so initial page is preserved)
-            LaunchedEffect(lazyListState, uiState.totalPages) {
+            LaunchedEffect(lazyListState, book.id, uiState.totalPages, uiState.isBookLoading) {
+                if (uiState.isBookLoading) return@LaunchedEffect
                 snapshotFlow {
-                    if (!uiState.isBookLoading && hasRestoredScrollPosition) {
+                    val state = currentUiState
+                    if (!state.isBookLoading && hasRestoredScrollPosition) {
                         val layoutInfo = lazyListState.layoutInfo
-                        val visibleItems = layoutInfo.visibleItemsInfo
-                        if (visibleItems.isEmpty()) {
-                            lazyListState.firstVisibleItemIndex
-                        } else {
-                            val viewportCenter = (layoutInfo.viewportStartOffset + layoutInfo.viewportEndOffset) / 2
-                            visibleItems.minByOrNull { item ->
-                                abs((item.offset + item.size / 2) - viewportCenter)
-                            }?.index ?: lazyListState.firstVisibleItemIndex
+                        val spans = layoutInfo.visibleItemsInfo.map { item ->
+                            VisiblePageSpan(index = item.index, offset = item.offset, size = item.size)
                         }
+                        resolveDominantVisiblePage(
+                            visibleItems = spans,
+                            viewportStart = layoutInfo.viewportStartOffset,
+                            viewportEnd = layoutInfo.viewportEndOffset,
+                            fallbackIndex = lazyListState.firstVisibleItemIndex
+                        )
                     } else null
                 }
                     .filterNotNull()
@@ -375,13 +413,10 @@ fun ReaderScreen(
                     }
             }
 
-            // Scroll to page if user jumped via Slider, TOC, Search, or Bookmark
-            LaunchedEffect(uiState.currentPageIndex) {
-                if (!uiState.isBookLoading && hasRestoredScrollPosition) {
-                    val visibleIndices = lazyListState.layoutInfo.visibleItemsInfo.map { it.index }
-                    if (uiState.currentPageIndex !in visibleIndices) {
-                        lazyListState.scrollToItem(uiState.currentPageIndex)
-                    }
+            // Scroll to page if user explicitly jumped via Slider, Next/Prev, TOC, or Bookmark
+            LaunchedEffect(uiState.pageJumpTrigger, uiState.isBookLoading) {
+                if (!uiState.isBookLoading && hasRestoredScrollPosition && uiState.pageJumpTrigger > 0L) {
+                    lazyListState.scrollToItem(currentUiState.currentPageIndex)
                 }
             }
 

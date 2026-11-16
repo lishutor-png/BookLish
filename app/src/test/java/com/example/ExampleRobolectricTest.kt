@@ -448,5 +448,130 @@ class ExampleRobolectricTest {
     org.junit.Assert.assertTrue("First match top < second match top", pageBoxes[0].normalizedTop < pageBoxes[1].normalizedTop)
     org.junit.Assert.assertTrue("First match left < second match left", pageBoxes[0].normalizedLeft < pageBoxes[1].normalizedLeft)
   }
+
+  @Test
+  fun `resolveDominantVisiblePage updates current page smoothly while scrolling vertically`() {
+    // Viewport height = 1000 (0..1000)
+    // Initially at top: page 0 covers 0..950, page 1 peeks 964..1000
+    assertEquals(
+      0,
+      com.example.ui.screens.resolveDominantVisiblePage(
+        visibleItems = listOf(
+          com.example.ui.screens.VisiblePageSpan(index = 0, offset = 0, size = 1200),
+          com.example.ui.screens.VisiblePageSpan(index = 1, offset = 1214, size = 1200)
+        ),
+        viewportStart = 0,
+        viewportEnd = 1000
+      )
+    )
+
+    // Scrolled midway where page 0 covers 0..450 and page 1 covers 464..1000 (536px > 450px)
+    assertEquals(
+      1,
+      com.example.ui.screens.resolveDominantVisiblePage(
+        visibleItems = listOf(
+          com.example.ui.screens.VisiblePageSpan(index = 0, offset = -750, size = 1200),
+          com.example.ui.screens.VisiblePageSpan(index = 1, offset = 464, size = 1200)
+        ),
+        viewportStart = 0,
+        viewportEnd = 1000
+      )
+    )
+
+    // Scrolled further down to page 2 (occupying 150..1000 = 850px vs page 1's 0..136)
+    assertEquals(
+      2,
+      com.example.ui.screens.resolveDominantVisiblePage(
+        visibleItems = listOf(
+          com.example.ui.screens.VisiblePageSpan(index = 1, offset = -1064, size = 1200),
+          com.example.ui.screens.VisiblePageSpan(index = 2, offset = 150, size = 1200)
+        ),
+        viewportStart = 0,
+        viewportEnd = 1000
+      )
+    )
+
+    // Empty visible items returns fallback
+    assertEquals(
+      3,
+      com.example.ui.screens.resolveDominantVisiblePage(
+        visibleItems = emptyList(),
+        viewportStart = 0,
+        viewportEnd = 1000,
+        fallbackIndex = 3
+      )
+    )
+  }
+
+  @Test
+  fun `syncVisiblePageInContinuousMode updates indicator state and persists last read page to Room`() {
+    val context = ApplicationProvider.getApplicationContext<android.app.Application>()
+    com.example.data.parser.PdfTextExtractor.initPdfBox(context)
+
+    val db = com.example.data.local.AppDatabase.getDatabase(context)
+    val repo = com.example.data.local.BookRepository(db)
+    val insertedId = kotlinx.coroutines.runBlocking {
+      repo.insertBook(
+        com.example.data.model.BookEntity(
+          title = "Uji Gulir Halaman",
+          localFilePath = "/tmp/nonexistent_robolectric_test.pdf",
+          fileType = "PDF",
+          totalPages = 4,
+          currentPage = 0,
+          progressPercent = 0
+        )
+      )
+    }
+    val book = kotlinx.coroutines.runBlocking { repo.getBookById(insertedId)!! }
+
+    val viewModel = com.example.ui.viewmodel.ReaderViewModel(context)
+    viewModel.openBook(book)
+
+    // Pump main looper until openBook populates currentBook and finishes loading attempt
+    val mainLooper = org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper())
+    var waitedMs = 0L
+    while ((viewModel.uiState.value.isBookLoading || viewModel.uiState.value.currentBook == null) && waitedMs < 5000L) {
+      mainLooper.idle()
+      Thread.sleep(25L)
+      waitedMs += 25L
+    }
+    mainLooper.idle()
+
+    org.junit.Assert.assertNotNull("Book should be active in UI state", viewModel.uiState.value.currentBook)
+    org.junit.Assert.assertFalse("Book loading state should settle", viewModel.uiState.value.isBookLoading)
+    assertEquals(4, viewModel.uiState.value.totalPages)
+    assertEquals(0, viewModel.uiState.value.currentPageIndex)
+
+    // Simulate user scrolling to page 3 (index 2, "Halaman 3 dari 4")
+    val jumpBefore = viewModel.uiState.value.pageJumpTrigger
+    viewModel.syncVisiblePageInContinuousMode(2)
+    mainLooper.idle()
+
+    assertEquals(2, viewModel.uiState.value.currentPageIndex)
+    assertEquals("Halaman 3 dari 4", viewModel.uiState.value.currentChapterTitle)
+    assertEquals(
+      "Continuous scroll sync must NOT trigger programmatic scroll jump",
+      jumpBefore,
+      viewModel.uiState.value.pageJumpTrigger
+    )
+
+    // Wait for Room IO coroutine updateProgress to commit
+    var persisted = kotlinx.coroutines.runBlocking { repo.getBookById(insertedId) }
+    waitedMs = 0L
+    while (persisted?.currentPage != 2 && waitedMs < 3000L) {
+      mainLooper.idle()
+      Thread.sleep(25L)
+      waitedMs += 25L
+      persisted = kotlinx.coroutines.runBlocking { repo.getBookById(insertedId) }
+    }
+
+    assertEquals("Room must persist the scrolled page index", 2, persisted?.currentPage)
+    assertEquals("Room must persist 75% progress for page 3/4", 75, persisted?.progressPercent)
+
+    // Clean up
+    viewModel.closeReader()
+    mainLooper.idle()
+    kotlinx.coroutines.runBlocking { repo.deleteBookById(insertedId) }
+  }
 }
 
